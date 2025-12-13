@@ -69,7 +69,10 @@ Create a `.env` file in the project root:
 ```env
 # Required
 REFRESH_TOKEN="your_kiro_refresh_token"
-PROXY_API_KEY="your_proxy_secret"
+
+# Password to protect YOUR proxy server (make up any secure string)
+# You'll use this as api_key when connecting to your gateway
+PROXY_API_KEY="my-super-secret-password-123"
 
 # Optional
 PROFILE_ARN="arn:aws:codewhisperer:us-east-1:..."
@@ -82,7 +85,9 @@ Specify the path to the credentials file:
 
 ```env
 KIRO_CREDS_FILE="~/.aws/sso/cache/kiro-auth-token.json"
-PROXY_API_KEY="your_proxy_secret"
+
+# Password to protect YOUR proxy server (make up any secure string)
+PROXY_API_KEY="my-super-secret-password-123"
 ```
 
 <details>
@@ -140,7 +145,7 @@ The refresh token can be obtained by intercepting Kiro IDE traffic. Look for req
 
 ```bash
 curl http://localhost:8000/v1/chat/completions \
-  -H "Authorization: Bearer your_proxy_secret" \
+  -H "Authorization: Bearer my-super-secret-password-123" \
   -H "Content-Type: application/json" \
   -d '{
     "model": "claude-sonnet-4-5",
@@ -149,6 +154,8 @@ curl http://localhost:8000/v1/chat/completions \
   }'
 ```
 
+> **Note:** Replace `my-super-secret-password-123` with the `PROXY_API_KEY` you set in your `.env` file.
+
 </details>
 
 <details>
@@ -156,7 +163,7 @@ curl http://localhost:8000/v1/chat/completions \
 
 ```bash
 curl http://localhost:8000/v1/chat/completions \
-  -H "Authorization: Bearer your_proxy_secret" \
+  -H "Authorization: Bearer my-super-secret-password-123" \
   -H "Content-Type: application/json" \
   -d '{
     "model": "claude-sonnet-4-5",
@@ -175,7 +182,7 @@ curl http://localhost:8000/v1/chat/completions \
 
 ```bash
 curl http://localhost:8000/v1/chat/completions \
-  -H "Authorization: Bearer your_proxy_secret" \
+  -H "Authorization: Bearer my-super-secret-password-123" \
   -H "Content-Type: application/json" \
   -d '{
     "model": "claude-sonnet-4-5",
@@ -207,7 +214,7 @@ from openai import OpenAI
 
 client = OpenAI(
     base_url="http://localhost:8000/v1",
-    api_key="your_proxy_secret"
+    api_key="my-super-secret-password-123"  # Your PROXY_API_KEY from .env
 )
 
 response = client.chat.completions.create(
@@ -234,7 +241,7 @@ from langchain_openai import ChatOpenAI
 
 llm = ChatOpenAI(
     base_url="http://localhost:8000/v1",
-    api_key="your_proxy_secret",
+    api_key="my-super-secret-password-123",  # Your PROXY_API_KEY from .env
     model="claude-sonnet-4-5"
 )
 
