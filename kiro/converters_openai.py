@@ -130,6 +130,8 @@ def convert_openai_messages_to_unified(messages: List[ChatMessage]) -> Tuple[str
     # Process tool messages - convert to user messages with tool_results
     processed = []
     pending_tool_results = []
+    total_tool_calls = 0
+    total_tool_results = 0
     
     for msg in non_system_messages:
         if msg.role == "tool":
@@ -140,7 +142,7 @@ def convert_openai_messages_to_unified(messages: List[ChatMessage]) -> Tuple[str
                 "content": extract_text_content(msg.content) or "(empty result)"
             }
             pending_tool_results.append(tool_result)
-            logger.debug(f"Collected tool result for tool_call_id={msg.tool_call_id}")
+            total_tool_results += 1
         else:
             # If there are accumulated tool results, create user message with them
             if pending_tool_results:
@@ -151,7 +153,6 @@ def convert_openai_messages_to_unified(messages: List[ChatMessage]) -> Tuple[str
                 )
                 processed.append(unified_msg)
                 pending_tool_results.clear()
-                logger.debug(f"Created user message with {len(unified_msg.tool_results)} tool results")
             
             # Convert regular message
             tool_calls = None
@@ -159,8 +160,12 @@ def convert_openai_messages_to_unified(messages: List[ChatMessage]) -> Tuple[str
             
             if msg.role == "assistant":
                 tool_calls = _extract_tool_calls_from_openai(msg) or None
+                if tool_calls:
+                    total_tool_calls += len(tool_calls)
             elif msg.role == "user":
                 tool_results = _extract_tool_results_from_openai(msg.content) or None
+                if tool_results:
+                    total_tool_results += len(tool_results)
             
             unified_msg = UnifiedMessage(
                 role=msg.role,
@@ -178,7 +183,13 @@ def convert_openai_messages_to_unified(messages: List[ChatMessage]) -> Tuple[str
             tool_results=pending_tool_results.copy()
         )
         processed.append(unified_msg)
-        logger.debug(f"Created final user message with {len(pending_tool_results)} tool results")
+    
+    # Log summary if any tool content was found
+    if total_tool_calls > 0 or total_tool_results > 0:
+        logger.debug(
+            f"Converted {len(messages)} OpenAI messages: "
+            f"{total_tool_calls} tool_calls, {total_tool_results} tool_results"
+        )
     
     return system_prompt, processed
 

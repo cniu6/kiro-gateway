@@ -153,7 +153,6 @@ def extract_tool_results_from_anthropic_content(content: Any) -> List[Dict[str, 
                 "tool_use_id": tool_use_id,
                 "content": result_content or "(empty result)"
             })
-            logger.debug(f"Extracted tool result for tool_use_id={tool_use_id}")
     
     return tool_results
 
@@ -201,7 +200,6 @@ def extract_tool_uses_from_anthropic_content(content: Any) -> List[Dict[str, Any
                     "arguments": tool_input if isinstance(tool_input, str) else tool_input
                 }
             })
-            logger.debug(f"Extracted tool use: {tool_name} (id={tool_id})")
     
     return tool_calls
 
@@ -222,6 +220,8 @@ def convert_anthropic_messages(messages: List[AnthropicMessage]) -> List[Unified
         List of messages in unified format
     """
     unified_messages = []
+    total_tool_calls = 0
+    total_tool_results = 0
     
     for msg in messages:
         role = msg.role
@@ -238,13 +238,13 @@ def convert_anthropic_messages(messages: List[AnthropicMessage]) -> List[Unified
             # Assistant messages may contain tool_use blocks
             tool_calls = extract_tool_uses_from_anthropic_content(content)
             if tool_calls:
-                logger.debug(f"Found {len(tool_calls)} tool calls in assistant message")
+                total_tool_calls += len(tool_calls)
         
         elif role == "user":
             # User messages may contain tool_result blocks
             tool_results = extract_tool_results_from_anthropic_content(content)
             if tool_results:
-                logger.debug(f"Found {len(tool_results)} tool results in user message")
+                total_tool_results += len(tool_results)
         
         unified_msg = UnifiedMessage(
             role=role,
@@ -253,6 +253,13 @@ def convert_anthropic_messages(messages: List[AnthropicMessage]) -> List[Unified
             tool_results=tool_results if tool_results else None
         )
         unified_messages.append(unified_msg)
+    
+    # Log summary if any tool content was found
+    if total_tool_calls > 0 or total_tool_results > 0:
+        logger.debug(
+            f"Converted {len(messages)} Anthropic messages: "
+            f"{total_tool_calls} tool_calls, {total_tool_results} tool_results"
+        )
     
     return unified_messages
 

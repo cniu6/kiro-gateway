@@ -865,6 +865,54 @@ Unit tests for **Anthropic Messages API → Kiro** converters. **45 tests.**
   - **What it does**: Verifies conversion of other types to string
   - **Purpose**: Ensure numbers and other types are converted
 
+#### `TestExtractSystemPrompt`
+
+Tests for extract_system_prompt function (Support System commit - prompt caching support).
+
+- **`test_extracts_from_string()`**:
+  - **What it does**: Verifies extraction from simple string
+  - **Purpose**: Ensure string system prompt is returned as-is
+
+- **`test_extracts_from_list_with_text_blocks()`**:
+  - **What it does**: Verifies extraction from list of content blocks
+  - **Purpose**: Ensure Anthropic prompt caching format is handled
+
+- **`test_extracts_from_list_with_cache_control()`**:
+  - **What it does**: Verifies extraction ignores cache_control field
+  - **Purpose**: Ensure cache_control is stripped (not supported by Kiro)
+
+- **`test_extracts_from_pydantic_system_content_blocks()`**:
+  - **What it does**: Verifies extraction from Pydantic SystemContentBlock objects
+  - **Purpose**: Ensure Pydantic models are handled correctly
+
+- **`test_handles_none()`**:
+  - **What it does**: Verifies None handling
+  - **Purpose**: Ensure None returns empty string
+
+- **`test_handles_empty_list()`**:
+  - **What it does**: Verifies empty list handling
+  - **Purpose**: Ensure empty list returns empty string
+
+- **`test_handles_mixed_content_blocks()`**:
+  - **What it does**: Verifies handling of list with non-text blocks
+  - **Purpose**: Ensure only text blocks are extracted
+
+- **`test_converts_other_types_to_string()`**:
+  - **What it does**: Verifies conversion of other types to string
+  - **Purpose**: Ensure numbers and other types are converted
+
+- **`test_handles_single_text_block()`**:
+  - **What it does**: Verifies extraction from single text block in list
+  - **Purpose**: Ensure single block list works correctly
+
+- **`test_handles_empty_text_in_block()`**:
+  - **What it does**: Verifies handling of empty text in content block
+  - **Purpose**: Ensure empty text doesn't cause errors
+
+- **`test_handles_missing_text_key()`**:
+  - **What it does**: Verifies handling of content block without text key
+  - **Purpose**: Ensure missing text key doesn't cause errors
+
 #### `TestExtractToolResultsFromAnthropicContent`
 
 - **`test_extracts_tool_result_from_dict()`**:
@@ -1021,9 +1069,9 @@ Main entry point tests for anthropic_to_kiro function.
   - **What it does**: Verifies that thinking tags are injected when enabled
   - **Purpose**: Ensure fake reasoning feature works with Anthropic API
 
-- **`test_skips_thinking_tags_when_tool_results_present()`**:
-  - **What it does**: Verifies that thinking tags are skipped when tool results are present
-  - **Purpose**: Ensure Kiro API compatibility (rejects thinking tags with tool results)
+- **`test_injects_thinking_tags_even_when_tool_results_present()`**:
+  - **What it does**: Verifies that thinking tags ARE injected even when tool results are present
+  - **Purpose**: Extended thinking should work in all scenarios including tool use flows
 
 ---
 
@@ -1170,6 +1218,54 @@ Tests for sanitize_json_schema function that cleans JSON Schema from fields not 
 - **`test_extracts_multiple_tool_results()`**:
   - **What it does**: Verifies extraction of multiple tool results
   - **Purpose**: Ensure all tool_result elements are extracted
+
+#### `TestConvertToolResultsToKiroFormat`
+
+Tests for convert_tool_results_to_kiro_format function that converts unified tool results format (snake_case) to Kiro API format (camelCase). This is a critical function for fixing the 400 "Improperly formed request" bug.
+
+- **`test_converts_single_tool_result()`**:
+  - **What it does**: Verifies conversion of a single tool result
+  - **Purpose**: Ensure basic conversion from unified to Kiro format works
+
+- **`test_converts_multiple_tool_results()`**:
+  - **What it does**: Verifies conversion of multiple tool results
+  - **Purpose**: Ensure all tool results are converted correctly
+
+- **`test_returns_empty_list_for_empty_input()`**:
+  - **What it does**: Verifies empty list handling
+  - **Purpose**: Ensure empty input returns empty output
+
+- **`test_replaces_empty_content_with_placeholder()`**:
+  - **What it does**: Verifies empty content is replaced with placeholder
+  - **Purpose**: Ensure Kiro API receives non-empty content (required by API)
+
+- **`test_replaces_none_content_with_placeholder()`**:
+  - **What it does**: Verifies None content is replaced with placeholder
+  - **Purpose**: Ensure Kiro API receives non-empty content when content is None
+
+- **`test_handles_missing_content_key()`**:
+  - **What it does**: Verifies handling of missing content key
+  - **Purpose**: Ensure function doesn't crash when content key is missing
+
+- **`test_handles_missing_tool_use_id()`**:
+  - **What it does**: Verifies handling of missing tool_use_id
+  - **Purpose**: Ensure function returns empty string for missing tool_use_id
+
+- **`test_extracts_text_from_list_content()`**:
+  - **What it does**: Verifies extraction of text from list content
+  - **Purpose**: Ensure multimodal content format is handled correctly
+
+- **`test_preserves_long_content()`**:
+  - **What it does**: Verifies long content is preserved
+  - **Purpose**: Ensure large tool results are not truncated
+
+- **`test_all_results_have_success_status()`**:
+  - **What it does**: Verifies all results have status="success"
+  - **Purpose**: Ensure Kiro API receives correct status field
+
+- **`test_handles_unicode_content()`**:
+  - **What it does**: Verifies Unicode content is preserved
+  - **Purpose**: Ensure non-ASCII characters are handled correctly
 
 #### `TestExtractToolUses`
 
@@ -1443,9 +1539,9 @@ Unit tests for **OpenAI Chat API → Kiro** converters. **47 tests.**
   - **What it does**: Verifies including tools in userInputMessageContext
   - **Purpose**: Ensure tools are converted and included
 
-- **`test_skips_thinking_tags_when_tool_results_present()`**:
-  - **What it does**: Verifies thinking tags are NOT injected when toolResults are present
-  - **Purpose**: Fix GitHub issue #20 - OpenCode compaction returns 400 error
+- **`test_injects_thinking_tags_even_when_tool_results_present()`**:
+  - **What it does**: Verifies thinking tags ARE injected even when toolResults are present
+  - **Purpose**: Extended thinking should work in all scenarios including tool use flows
 
 - **`test_injects_thinking_tags_when_no_tool_results()`**:
   - **What it does**: Verifies thinking tags ARE injected for normal user messages

@@ -720,7 +720,12 @@ class TestMessagesOptionalParams:
             yield 'event: message_start\ndata: {"type":"message_start"}\n\n'
             yield 'event: message_stop\ndata: {"type":"message_stop"}\n\n'
         
-        with patch('kiro.routes_anthropic.stream_with_first_token_retry_anthropic', mock_stream):
+        # Create mock response for HTTP client
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        
+        with patch('kiro.routes_anthropic.stream_kiro_to_anthropic', mock_stream), \
+             patch('kiro.http_client.KiroHttpClient.request_with_retry', return_value=mock_response):
             response = test_client.post(
                 "/v1/messages",
                 headers={"x-api-key": valid_proxy_api_key},

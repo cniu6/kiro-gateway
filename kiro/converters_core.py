@@ -492,6 +492,124 @@ def extract_tool_uses_from_message(
 # Message Merging
 # ==================================================================================================
 
+def strip_all_tool_content(messages: List[UnifiedMessage]) -> Tuple[List[UnifiedMessage], bool]:
+    """
+    Strips ALL tool-related content from messages.
+    
+    This is used when no tools are defined in the request. Kiro API rejects
+    requests that have toolResults but no tools defined.
+    
+    Args:
+        messages: List of messages in unified format
+    
+    Returns:
+        Tuple of:
+        - List of messages with all tool content stripped
+        - Boolean indicating whether any tool content was stripped
+    """
+    if not messages:
+        return [], False
+    
+    result = []
+    total_tool_calls_stripped = 0
+    total_tool_results_stripped = 0
+    
+    for msg in messages:
+        # Check if this message has any tool content
+        has_tool_calls = bool(msg.tool_calls)
+        has_tool_results = bool(msg.tool_results)
+        
+        if has_tool_calls or has_tool_results:
+            if has_tool_calls:
+                total_tool_calls_stripped += len(msg.tool_calls)
+            if has_tool_results:
+                total_tool_results_stripped += len(msg.tool_results)
+            
+            # Create a copy of the message without tool content
+            cleaned_msg = UnifiedMessage(
+                role=msg.role,
+                content=msg.content,
+                tool_calls=None,
+                tool_results=None
+            )
+            result.append(cleaned_msg)
+        else:
+            result.append(msg)
+    
+    had_tool_content = total_tool_calls_stripped > 0 or total_tool_results_stripped > 0
+    
+    # Log summary once (DEBUG level - this is normal for clients like Cline/Roo)
+    if had_tool_content:
+        logger.debug(
+            f"Stripped tool content (no tools defined): "
+            f"{total_tool_calls_stripped} tool_calls, {total_tool_results_stripped} tool_results"
+        )
+    
+    return result, had_tool_content
+
+
+def ensure_assistant_before_tool_results(messages: List[UnifiedMessage]) -> Tuple[List[UnifiedMessage], bool]:
+    """
+    Ensures that messages with tool_results have a preceding assistant message with tool_calls.
+    
+    Kiro API requires that when toolResults are present, there must be a preceding
+    assistantResponseMessage with toolUses. Some clients (like Cline/Roo) may send
+    truncated conversations where the assistant message is missing.
+    
+    Since we don't know the original tool name and arguments when the assistant message
+    is missing, we cannot create a valid synthetic assistant message. Instead, we strip
+    the tool_results from such messages to avoid Kiro API rejection.
+    
+    Args:
+        messages: List of messages in unified format
+    
+    Returns:
+        Tuple of:
+        - List of messages with orphaned tool_results stripped
+        - Boolean indicating whether any tool_results were stripped (used to skip thinking tag injection)
+    """
+    if not messages:
+        return [], False
+    
+    result = []
+    stripped_any_tool_results = False
+    
+    for msg in messages:
+        # Check if this message has tool_results
+        if msg.tool_results:
+            # Check if the previous message is an assistant with tool_calls
+            has_preceding_assistant = (
+                result and
+                result[-1].role == "assistant" and
+                result[-1].tool_calls
+            )
+            
+            if not has_preceding_assistant:
+                # We cannot create a valid synthetic assistant message because we don't know
+                # the original tool name and arguments. Kiro API validates tool names.
+                # Strip the tool_results to avoid "Improperly formed request" error.
+                logger.warning(
+                    f"Stripping {len(msg.tool_results)} orphaned tool_results "
+                    f"(no preceding assistant message with tool_calls). "
+                    f"Tool IDs: {[tr.get('tool_use_id', 'unknown') for tr in msg.tool_results]}"
+                )
+                
+                # Create a copy of the message without tool_results
+                cleaned_msg = UnifiedMessage(
+                    role=msg.role,
+                    content=msg.content,
+                    tool_calls=msg.tool_calls,
+                    tool_results=None  # Strip orphaned tool_results
+                )
+                result.append(cleaned_msg)
+                stripped_any_tool_results = True
+                continue
+        
+        result.append(msg)
+    
+    return result, stripped_any_tool_results
+
+
 def merge_adjacent_messages(messages: List[UnifiedMessage]) -> List[UnifiedMessage]:
     """
     Merges adjacent messages with the same role.
@@ -655,8 +773,19 @@ def build_kiro_payload(
     if thinking_system_addition:
         full_system_prompt = full_system_prompt + thinking_system_addition if full_system_prompt else thinking_system_addition.strip()
     
+    # If no tools are defined, strip ALL tool-related content from messages
+    # Kiro API rejects requests with toolResults but no tools
+    if not tools:
+        messages_without_tools, had_tool_content = strip_all_tool_content(messages)
+        messages_with_assistants = messages_without_tools
+        stripped_tool_results = had_tool_content
+    else:
+        # Ensure assistant messages exist before tool_results (Kiro API requirement)
+        # Also returns flag if any tool_results were stripped (to skip thinking tag injection)
+        messages_with_assistants, stripped_tool_results = ensure_assistant_before_tool_results(messages)
+    
     # Merge adjacent messages with the same role
-    merged_messages = merge_adjacent_messages(messages)
+    merged_messages = merge_adjacent_messages(messages_with_assistants)
     
     if not merged_messages:
         raise ValueError("No messages to send")
@@ -716,12 +845,8 @@ def build_kiro_payload(
             user_input_context["toolResults"] = tool_results
     
     # Inject thinking tags if enabled (only for the current/last user message)
-    # Skip injection when toolResults are present - Kiro API rejects this combination
-    has_tool_results = "toolResults" in user_input_context
-    if inject_thinking and current_message.role == "user" and not has_tool_results:
+    if inject_thinking and current_message.role == "user":
         current_content = inject_thinking_tags(current_content)
-    elif has_tool_results:
-        logger.debug("Skipping thinking tag injection: toolResults present in current message")
     
     # Build userInputMessage
     user_input_message = {

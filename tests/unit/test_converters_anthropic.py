@@ -17,6 +17,7 @@ from unittest.mock import patch, MagicMock
 
 from kiro.converters_anthropic import (
     convert_anthropic_content_to_text,
+    extract_system_prompt,
     extract_tool_results_from_anthropic_content,
     extract_tool_uses_from_anthropic_content,
     convert_anthropic_messages,
@@ -31,6 +32,7 @@ from kiro.models_anthropic import (
     TextContentBlock,
     ToolUseContentBlock,
     ToolResultContentBlock,
+    SystemContentBlock,
 )
 
 
@@ -147,6 +149,183 @@ class TestConvertAnthropicContentToText:
         
         print(f"Comparing result: Expected '42', Got '{result}'")
         assert result == "42"
+
+
+# ==================================================================================================
+# Tests for extract_system_prompt
+# ==================================================================================================
+
+class TestExtractSystemPrompt:
+    """Tests for extract_system_prompt function (Support System commit)."""
+    
+    def test_extracts_from_string(self):
+        """
+        What it does: Verifies extraction from simple string.
+        Purpose: Ensure string system prompt is returned as-is.
+        """
+        print("Setup: Simple string system prompt...")
+        system = "You are a helpful assistant."
+        
+        print("Action: Extracting system prompt...")
+        result = extract_system_prompt(system)
+        
+        print(f"Comparing result: Expected 'You are a helpful assistant.', Got '{result}'")
+        assert result == "You are a helpful assistant."
+    
+    def test_extracts_from_list_with_text_blocks(self):
+        """
+        What it does: Verifies extraction from list of content blocks.
+        Purpose: Ensure Anthropic prompt caching format is handled.
+        """
+        print("Setup: List with text content blocks (prompt caching format)...")
+        system = [
+            {"type": "text", "text": "You are helpful."},
+            {"type": "text", "text": "Be concise."}
+        ]
+        
+        print("Action: Extracting system prompt...")
+        result = extract_system_prompt(system)
+        
+        print(f"Comparing result: Expected 'You are helpful.\\nBe concise.', Got '{result}'")
+        assert result == "You are helpful.\nBe concise."
+    
+    def test_extracts_from_list_with_cache_control(self):
+        """
+        What it does: Verifies extraction ignores cache_control field.
+        Purpose: Ensure cache_control is stripped (not supported by Kiro).
+        """
+        print("Setup: List with cache_control (prompt caching format)...")
+        system = [
+            {
+                "type": "text",
+                "text": "You are a helpful assistant.",
+                "cache_control": {"type": "ephemeral"}
+            }
+        ]
+        
+        print("Action: Extracting system prompt...")
+        result = extract_system_prompt(system)
+        
+        print(f"Comparing result: Expected 'You are a helpful assistant.', Got '{result}'")
+        assert result == "You are a helpful assistant."
+    
+    def test_extracts_from_pydantic_system_content_blocks(self):
+        """
+        What it does: Verifies extraction from Pydantic SystemContentBlock objects.
+        Purpose: Ensure Pydantic models are handled correctly.
+        """
+        print("Setup: List with Pydantic SystemContentBlock objects...")
+        system = [
+            SystemContentBlock(type="text", text="Part 1"),
+            SystemContentBlock(type="text", text="Part 2")
+        ]
+        
+        print("Action: Extracting system prompt...")
+        result = extract_system_prompt(system)
+        
+        print(f"Comparing result: Expected 'Part 1\\nPart 2', Got '{result}'")
+        assert result == "Part 1\nPart 2"
+    
+    def test_handles_none(self):
+        """
+        What it does: Verifies None handling.
+        Purpose: Ensure None returns empty string.
+        """
+        print("Setup: None system prompt...")
+        
+        print("Action: Extracting system prompt...")
+        result = extract_system_prompt(None)
+        
+        print(f"Comparing result: Expected '', Got '{result}'")
+        assert result == ""
+    
+    def test_handles_empty_list(self):
+        """
+        What it does: Verifies empty list handling.
+        Purpose: Ensure empty list returns empty string.
+        """
+        print("Setup: Empty list...")
+        system = []
+        
+        print("Action: Extracting system prompt...")
+        result = extract_system_prompt(system)
+        
+        print(f"Comparing result: Expected '', Got '{result}'")
+        assert result == ""
+    
+    def test_handles_mixed_content_blocks(self):
+        """
+        What it does: Verifies handling of list with non-text blocks.
+        Purpose: Ensure only text blocks are extracted.
+        """
+        print("Setup: List with mixed content blocks...")
+        system = [
+            {"type": "text", "text": "Hello"},
+            {"type": "image", "source": {"type": "base64", "data": "..."}},
+            {"type": "text", "text": "World"}
+        ]
+        
+        print("Action: Extracting system prompt...")
+        result = extract_system_prompt(system)
+        
+        print(f"Comparing result: Expected 'Hello\\nWorld', Got '{result}'")
+        assert result == "Hello\nWorld"
+    
+    def test_converts_other_types_to_string(self):
+        """
+        What it does: Verifies conversion of other types to string.
+        Purpose: Ensure numbers and other types are converted.
+        """
+        print("Setup: Number as system prompt...")
+        system = 42
+        
+        print("Action: Extracting system prompt...")
+        result = extract_system_prompt(system)
+        
+        print(f"Comparing result: Expected '42', Got '{result}'")
+        assert result == "42"
+    
+    def test_handles_single_text_block(self):
+        """
+        What it does: Verifies extraction from single text block in list.
+        Purpose: Ensure single block list works correctly.
+        """
+        print("Setup: Single text block in list...")
+        system = [{"type": "text", "text": "Single block"}]
+        
+        print("Action: Extracting system prompt...")
+        result = extract_system_prompt(system)
+        
+        print(f"Comparing result: Expected 'Single block', Got '{result}'")
+        assert result == "Single block"
+    
+    def test_handles_empty_text_in_block(self):
+        """
+        What it does: Verifies handling of empty text in content block.
+        Purpose: Ensure empty text doesn't cause errors.
+        """
+        print("Setup: Content block with empty text...")
+        system = [{"type": "text", "text": ""}]
+        
+        print("Action: Extracting system prompt...")
+        result = extract_system_prompt(system)
+        
+        print(f"Comparing result: Expected '', Got '{result}'")
+        assert result == ""
+    
+    def test_handles_missing_text_key(self):
+        """
+        What it does: Verifies handling of content block without text key.
+        Purpose: Ensure missing text key doesn't cause errors.
+        """
+        print("Setup: Content block without text key...")
+        system = [{"type": "text"}]
+        
+        print("Action: Extracting system prompt...")
+        result = extract_system_prompt(system)
+        
+        print(f"Comparing result: Expected '', Got '{result}'")
+        assert result == ""
 
 
 # ==================================================================================================
@@ -857,7 +1036,15 @@ class TestAnthropicToKiro:
                     ]
                 )
             ],
-            max_tokens=1024
+            max_tokens=1024,
+            # Tools must be defined for tool_results to be preserved
+            tools=[
+                AnthropicTool(
+                    name="get_weather",
+                    description="Get weather for a location",
+                    input_schema={"type": "object", "properties": {"location": {"type": "string"}}}
+                )
+            ]
         )
         
         print("Action: Converting to Kiro payload...")
@@ -926,14 +1113,10 @@ class TestAnthropicToKiro:
         assert "<thinking_mode>enabled</thinking_mode>" in current_content
         assert "What is 2+2?" in current_content
     
-    def test_skips_thinking_tags_when_tool_results_present(self):
+    def test_injects_thinking_tags_even_when_tool_results_present(self):
         """
-        What it does: Verifies that thinking tags are skipped when tool results are present.
-        Purpose: Ensure Kiro API compatibility (rejects thinking tags with tool results).
-        
-        Note: The system prompt addition contains `<thinking_mode>` as documentation text
-        (in backticks), but the actual thinking tags injection is skipped. We check that
-        the content doesn't START with the thinking tags prefix.
+        What it does: Verifies that thinking tags ARE injected even when tool results are present.
+        Purpose: Extended thinking should work in all scenarios including tool use flows.
         """
         print("Setup: Request with tool results and fake reasoning enabled...")
         request = AnthropicMessagesRequest(
@@ -946,7 +1129,15 @@ class TestAnthropicToKiro:
                     ]
                 )
             ],
-            max_tokens=1024
+            max_tokens=1024,
+            # Tools must be defined for tool_results to be preserved
+            tools=[
+                AnthropicTool(
+                    name="test_tool",
+                    description="A test tool",
+                    input_schema={"type": "object", "properties": {}}
+                )
+            ]
         )
         
         print("Action: Converting to Kiro payload...")
@@ -959,14 +1150,10 @@ class TestAnthropicToKiro:
         current_content = result["conversationState"]["currentMessage"]["userInputMessage"]["content"]
         print(f"Current content (first 100 chars): {current_content[:100]}...")
         
-        print("Checking that content does NOT start with thinking tags prefix...")
-        # The actual thinking tags prefix starts with "<thinking_mode>enabled"
-        # The system prompt addition contains this text in backticks as documentation
-        # We check that the content doesn't start with the actual tag (not in backticks)
-        assert not current_content.startswith("<thinking_mode>enabled</thinking_mode>"), \
-            "Content should not start with thinking tags when tool results are present"
+        print("Checking that thinking tags ARE present...")
+        assert "<thinking_mode>enabled</thinking_mode>" in current_content, \
+            "thinking tags SHOULD be injected even with tool results"
         
-        print("Checking that <max_thinking_length> tag is NOT present...")
-        # This tag is only present in the actual injection, not in documentation
-        assert "<max_thinking_length>4000</max_thinking_length>" not in current_content, \
-            "max_thinking_length tag should not be present when tool results are present"
+        print("Checking that <max_thinking_length> tag IS present...")
+        assert "<max_thinking_length>4000</max_thinking_length>" in current_content, \
+            "max_thinking_length tag SHOULD be present even with tool results"
