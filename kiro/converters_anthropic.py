@@ -40,6 +40,7 @@ from kiro.converters_core import (
     UnifiedTool,
     build_kiro_payload,
     extract_text_content,
+    extract_images_from_content,
 )
 
 
@@ -205,6 +206,59 @@ def extract_tool_uses_from_anthropic_content(content: Any) -> List[Dict[str, Any
     return tool_calls
 
 
+def extract_images_from_anthropic_content(content: Any) -> List[Dict[str, Any]]:
+    """
+    Extracts images from Anthropic message content.
+    
+    Anthropic format: {"type": "image", "source": {"type": "base64", "media_type": "...", "data": "..."}}
+    Also handles Pydantic ImageContentBlock objects.
+    
+    Args:
+        content: Anthropic message content (list of content blocks)
+    
+    Returns:
+        List of images in unified format: [{"media_type": "image/jpeg", "data": "..."}]
+    """
+    images = []
+    
+    if not isinstance(content, list):
+        return images
+    
+    for block in content:
+        block_type = None
+        source = None
+        
+        if isinstance(block, dict):
+            block_type = block.get("type")
+            source = block.get("source")
+        elif hasattr(block, "type"):
+            block_type = block.type
+            source = getattr(block, "source", None)
+        
+        if block_type == "image" and source:
+            # Handle both dict and Pydantic ImageSource
+            if isinstance(source, dict):
+                if source.get("type") == "base64":
+                    media_type = source.get("media_type", "image/jpeg")
+                    data = source.get("data", "")
+                    if data:
+                        images.append({
+                            "media_type": media_type,
+                            "data": data
+                        })
+            elif hasattr(source, "type") and source.type == "base64":
+                # Pydantic ImageSource object
+                media_type = getattr(source, "media_type", "image/jpeg")
+                data = getattr(source, "data", "")
+                if data:
+                    images.append({
+                        "media_type": media_type,
+                        "data": data
+                    })
+    
+    return images
+
+
 def convert_anthropic_messages(messages: List[AnthropicMessage]) -> List[UnifiedMessage]:
     """
     Converts Anthropic messages to unified format.
@@ -213,6 +267,7 @@ def convert_anthropic_messages(messages: List[AnthropicMessage]) -> List[Unified
     - Text content (string or list of text blocks)
     - Tool use blocks (assistant messages)
     - Tool result blocks (user messages)
+    - Image blocks (user messages)
     
     Args:
         messages: List of Anthropic messages
@@ -223,6 +278,7 @@ def convert_anthropic_messages(messages: List[AnthropicMessage]) -> List[Unified
     unified_messages = []
     total_tool_calls = 0
     total_tool_results = 0
+    total_images = 0
     
     for msg in messages:
         role = msg.role
@@ -231,9 +287,10 @@ def convert_anthropic_messages(messages: List[AnthropicMessage]) -> List[Unified
         # Extract text content
         text_content = convert_anthropic_content_to_text(content)
         
-        # Extract tool-related data based on role
+        # Extract tool-related data and images based on role
         tool_calls = None
         tool_results = None
+        images = None
         
         if role == "assistant":
             # Assistant messages may contain tool_use blocks
@@ -242,24 +299,30 @@ def convert_anthropic_messages(messages: List[AnthropicMessage]) -> List[Unified
                 total_tool_calls += len(tool_calls)
         
         elif role == "user":
-            # User messages may contain tool_result blocks
+            # User messages may contain tool_result blocks and images
             tool_results = extract_tool_results_from_anthropic_content(content)
             if tool_results:
                 total_tool_results += len(tool_results)
+            
+            # Extract images from user messages
+            images = extract_images_from_anthropic_content(content)
+            if images:
+                total_images += len(images)
         
         unified_msg = UnifiedMessage(
             role=role,
             content=text_content,
             tool_calls=tool_calls if tool_calls else None,
-            tool_results=tool_results if tool_results else None
+            tool_results=tool_results if tool_results else None,
+            images=images if images else None
         )
         unified_messages.append(unified_msg)
     
-    # Log summary if any tool content was found
-    if total_tool_calls > 0 or total_tool_results > 0:
+    # Log summary if any tool content or images were found
+    if total_tool_calls > 0 or total_tool_results > 0 or total_images > 0:
         logger.debug(
             f"Converted {len(messages)} Anthropic messages: "
-            f"{total_tool_calls} tool_calls, {total_tool_results} tool_results"
+            f"{total_tool_calls} tool_calls, {total_tool_results} tool_results, {total_images} images"
         )
     
     return unified_messages
@@ -364,12 +427,7 @@ def anthropic_to_kiro(
     # Convert tools to unified format
     unified_tools = convert_anthropic_tools(request.tools)
     
-<<<<<<< HEAD
     # System prompt - convert from string or list of content blocks (for prompt caching)
-=======
-    # System prompt is already separate in Anthropic format!
-    # It can be a string or list of content blocks (for prompt caching)
->>>>>>> upstream/main
     system_prompt = extract_system_prompt(request.system)
     
     # Get internal model ID

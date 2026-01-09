@@ -39,6 +39,7 @@ from kiro.models_openai import ChatMessage, ChatCompletionRequest, Tool
 # Import from core - reuse shared logic
 from kiro.converters_core import (
     extract_text_content,
+    extract_images_from_content,
     UnifiedMessage,
     UnifiedTool,
     build_kiro_payload as core_build_kiro_payload,
@@ -127,6 +128,7 @@ def convert_openai_messages_to_unified(messages: List[ChatMessage]) -> Tuple[str
     - System messages (extracted as system prompt)
     - Tool messages (converted to user messages with tool_results)
     - Tool calls in assistant messages
+    - Images in user messages
     
     Args:
         messages: List of OpenAI ChatMessage objects
@@ -151,6 +153,7 @@ def convert_openai_messages_to_unified(messages: List[ChatMessage]) -> Tuple[str
     pending_tool_results = []
     total_tool_calls = 0
     total_tool_results = 0
+    total_images = 0
     
     for msg in non_system_messages:
         if msg.role == "tool":
@@ -176,6 +179,7 @@ def convert_openai_messages_to_unified(messages: List[ChatMessage]) -> Tuple[str
             # Convert regular message
             tool_calls = None
             tool_results = None
+            images = None
             
             if msg.role == "assistant":
                 tool_calls = _extract_tool_calls_from_openai(msg) or None
@@ -185,12 +189,17 @@ def convert_openai_messages_to_unified(messages: List[ChatMessage]) -> Tuple[str
                 tool_results = _extract_tool_results_from_openai(msg.content) or None
                 if tool_results:
                     total_tool_results += len(tool_results)
+                # Extract images from user messages
+                images = extract_images_from_content(msg.content) or None
+                if images:
+                    total_images += len(images)
             
             unified_msg = UnifiedMessage(
                 role=msg.role,
                 content=extract_text_content(msg.content),
                 tool_calls=tool_calls,
-                tool_results=tool_results
+                tool_results=tool_results,
+                images=images
             )
             processed.append(unified_msg)
     
@@ -203,11 +212,11 @@ def convert_openai_messages_to_unified(messages: List[ChatMessage]) -> Tuple[str
         )
         processed.append(unified_msg)
     
-    # Log summary if any tool content was found
-    if total_tool_calls > 0 or total_tool_results > 0:
+    # Log summary if any tool content or images were found
+    if total_tool_calls > 0 or total_tool_results > 0 or total_images > 0:
         logger.debug(
             f"Converted {len(messages)} OpenAI messages: "
-            f"{total_tool_calls} tool_calls, {total_tool_results} tool_results"
+            f"{total_tool_calls} tool_calls, {total_tool_results} tool_results, {total_images} images"
         )
     
     return system_prompt, processed

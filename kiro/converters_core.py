@@ -59,11 +59,13 @@ class UnifiedMessage:
         content: Text content or list of content blocks
         tool_calls: List of tool calls (for assistant messages)
         tool_results: List of tool results (for user messages with tool responses)
+        images: List of image data (for user messages with images)
     """
     role: str
     content: Any = ""
     tool_calls: Optional[List[Dict[str, Any]]] = None
     tool_results: Optional[List[Dict[str, Any]]] = None
+    images: Optional[List[Dict[str, Any]]] = None
 
 
 @dataclass
@@ -131,12 +133,77 @@ def extract_text_content(content: Any) -> str:
             if isinstance(item, dict):
                 if item.get("type") == "text":
                     text_parts.append(item.get("text", ""))
-                elif "text" in item:
+                elif "text" in item and item.get("type") not in ("image", "image_url"):
                     text_parts.append(item["text"])
             elif isinstance(item, str):
                 text_parts.append(item)
         return "".join(text_parts)
     return str(content)
+
+
+def extract_images_from_content(content: Any) -> List[Dict[str, Any]]:
+    """
+    Extracts image data from message content.
+    
+    Supports multiple image formats:
+    - OpenAI format: {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,..."}}
+    - Anthropic format: {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": "..."}}
+    
+    Args:
+        content: Content in any supported format
+    
+    Returns:
+        List of image data in unified format:
+        [{"media_type": "image/jpeg", "data": "base64_data"}]
+    """
+    images = []
+    
+    if not isinstance(content, list):
+        return images
+    
+    for item in content:
+        if not isinstance(item, dict):
+            continue
+        
+        item_type = item.get("type")
+        
+        # OpenAI format: {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,..."}}
+        if item_type == "image_url":
+            image_url = item.get("image_url", {})
+            url = image_url.get("url", "") if isinstance(image_url, dict) else ""
+            
+            if url.startswith("data:"):
+                # Parse data URL: data:image/jpeg;base64,/9j/4AAQ...
+                try:
+                    # Split "data:image/jpeg;base64,/9j/4AAQ..." into parts
+                    header, data = url.split(",", 1)
+                    # Extract media type from "data:image/jpeg;base64"
+                    media_part = header.split(";")[0]  # "data:image/jpeg"
+                    media_type = media_part.replace("data:", "")  # "image/jpeg"
+                    
+                    images.append({
+                        "media_type": media_type,
+                        "data": data
+                    })
+                except (ValueError, IndexError) as e:
+                    logger.warning(f"Failed to parse image data URL: {e}")
+            elif url.startswith("http"):
+                # URL-based image - not supported by Kiro, log warning
+                logger.warning(f"URL-based images are not supported, skipping: {url[:50]}...")
+        
+        # Anthropic format: {"type": "image", "source": {"type": "base64", "media_type": "...", "data": "..."}}
+        elif item_type == "image":
+            source = item.get("source", {})
+            if isinstance(source, dict) and source.get("type") == "base64":
+                media_type = source.get("media_type", "image/jpeg")
+                data = source.get("data", "")
+                if data:
+                    images.append({
+                        "media_type": media_type,
+                        "data": data
+                    })
+    
+    return images
 
 
 # ==================================================================================================
@@ -756,26 +823,33 @@ def build_kiro_history(messages: List[UnifiedMessage], model_id: str) -> List[Di
                 "origin": "AI_EDITOR",
             }
             
-<<<<<<< HEAD
+            # Build userInputMessageContext
+            user_input_context = {}
+            
+            # Process images - convert to Kiro format
+            images = msg.images or extract_images_from_content(msg.content)
+            if images:
+                kiro_images = []
+                for img in images:
+                    kiro_images.append({
+                        "format": img.get("media_type", "image/jpeg").split("/")[-1],  # "jpeg", "png", etc.
+                        "source": {
+                            "bytes": img.get("data", "")
+                        }
+                    })
+                if kiro_images:
+                    user_input_context["images"] = kiro_images
+            
             # Process tool_results - convert to Kiro format
             tool_results = msg.tool_results or extract_tool_results_from_content(msg.content)
             if tool_results:
                 kiro_tool_results = convert_tool_results_to_kiro_format(tool_results)
                 if kiro_tool_results:
-                    user_input["userInputMessageContext"] = {"toolResults": kiro_tool_results}
-=======
-            # Process tool_results - convert to Kiro format if present
-            if msg.tool_results:
-                # Convert unified format to Kiro format
-                kiro_tool_results = convert_tool_results_to_kiro_format(msg.tool_results)
-                if kiro_tool_results:
-                    user_input["userInputMessageContext"] = {"toolResults": kiro_tool_results}
-            else:
-                # Try to extract from content (already in Kiro format)
-                tool_results = extract_tool_results_from_content(msg.content)
-                if tool_results:
-                    user_input["userInputMessageContext"] = {"toolResults": tool_results}
->>>>>>> upstream/main
+                    user_input_context["toolResults"] = kiro_tool_results
+            
+            # Add context if not empty
+            if user_input_context:
+                user_input["userInputMessageContext"] = user_input_context
             
             history.append({"userInputMessage": user_input})
             
@@ -900,26 +974,27 @@ def build_kiro_payload(
     if kiro_tools:
         user_input_context["tools"] = kiro_tools
     
-<<<<<<< HEAD
+    # Process images in current message - convert to Kiro format
+    images = current_message.images or extract_images_from_content(current_message.content)
+    if images:
+        kiro_images = []
+        for img in images:
+            kiro_images.append({
+                "format": img.get("media_type", "image/jpeg").split("/")[-1],  # "jpeg", "png", etc.
+                "source": {
+                    "bytes": img.get("data", "")
+                }
+            })
+        if kiro_images:
+            user_input_context["images"] = kiro_images
+            logger.debug(f"Added {len(kiro_images)} images to current message")
+    
     # Process tool_results in current message
     tool_results = current_message.tool_results or extract_tool_results_from_content(current_message.content)
     if tool_results:
         kiro_tool_results = convert_tool_results_to_kiro_format(tool_results)
         if kiro_tool_results:
             user_input_context["toolResults"] = kiro_tool_results
-=======
-    # Process tool_results in current message - convert to Kiro format if present
-    if current_message.tool_results:
-        # Convert unified format to Kiro format
-        kiro_tool_results = convert_tool_results_to_kiro_format(current_message.tool_results)
-        if kiro_tool_results:
-            user_input_context["toolResults"] = kiro_tool_results
-    else:
-        # Try to extract from content (already in Kiro format)
-        tool_results = extract_tool_results_from_content(current_message.content)
-        if tool_results:
-            user_input_context["toolResults"] = tool_results
->>>>>>> upstream/main
     
     # Inject thinking tags if enabled (only for the current/last user message)
     if inject_thinking and current_message.role == "user":

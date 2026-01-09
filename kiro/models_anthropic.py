@@ -86,8 +86,29 @@ class ToolResultContentBlock(BaseModel):
     is_error: Optional[bool] = None
 
 
+class ImageSource(BaseModel):
+    """
+    Image source in Anthropic format.
+    
+    Supports base64-encoded images.
+    """
+    type: Literal["base64"] = "base64"
+    media_type: str  # e.g., "image/jpeg", "image/png", "image/gif", "image/webp"
+    data: str  # base64-encoded image data
+
+
+class ImageContentBlock(BaseModel):
+    """
+    Image content block in Anthropic format.
+    
+    Represents an image in a message.
+    """
+    type: Literal["image"] = "image"
+    source: ImageSource
+
+
 # Union type for all content blocks
-ContentBlock = Union[TextContentBlock, ToolUseContentBlock, ToolResultContentBlock]
+ContentBlock = Union[TextContentBlock, ToolUseContentBlock, ToolResultContentBlock, ImageContentBlock]
 
 
 # ==================================================================================================
