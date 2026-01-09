@@ -18,9 +18,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from kiro.streaming_anthropic import (
     generate_message_id,
+    generate_thinking_signature,
     format_sse_event,
     stream_kiro_to_anthropic,
     collect_anthropic_response,
+    stream_with_first_token_retry_anthropic,
 )
 from kiro.streaming_core import KiroEvent, StreamResult
 
@@ -1110,3 +1112,335 @@ class TestStreamingAnthropicContextUsage:
                     mock_count.assert_called_once_with(request_messages, apply_claude_correction=False)
         
         print("✓ Request messages used for input token count")
+
+
+# ==================================================================================================
+# Tests for generate_thinking_signature()
+# ==================================================================================================
+
+class TestGenerateThinkingSignature:
+    """
+    Tests for generate_thinking_signature() function.
+    
+    This function generates placeholder signatures for thinking content blocks.
+    In real Anthropic API, this is a cryptographic signature for verification.
+    Since we use fake reasoning via tag injection, we generate a placeholder.
+    """
+    
+    def test_generates_signature_with_prefix(self):
+        """
+        What it does: Generates signature with 'sig_' prefix.
+        Goal: Verify signature format matches expected pattern.
+        """
+        print("Action: Generating thinking signature...")
+        signature = generate_thinking_signature()
+        
+        print(f"Generated signature: {signature}")
+        assert signature.startswith("sig_")
+        print("✓ Signature has correct prefix")
+    
+    def test_generates_unique_signatures(self):
+        """
+        What it does: Generates unique signatures.
+        Goal: Verify signatures are unique across multiple calls.
+        """
+        print("Action: Generating multiple signatures...")
+        signatures = [generate_thinking_signature() for _ in range(100)]
+        
+        print(f"Generated {len(signatures)} signatures")
+        unique_signatures = set(signatures)
+        print(f"Unique signatures: {len(unique_signatures)}")
+        
+        assert len(unique_signatures) == 100
+        print("✓ All signatures are unique")
+    
+    def test_signature_has_correct_length(self):
+        """
+        What it does: Verifies signature length.
+        Goal: Ensure signature format is consistent.
+        """
+        print("Action: Generating signature...")
+        signature = generate_thinking_signature()
+        
+        # Format: sig_ + 32 hex chars
+        print(f"Generated signature: {signature}, length: {len(signature)}")
+        assert len(signature) == 4 + 32  # "sig_" + 32 chars
+        print("✓ Signature has correct length")
+    
+    def test_signature_contains_only_valid_characters(self):
+        """
+        What it does: Verifies signature contains only valid hex characters.
+        Goal: Ensure signature is properly formatted.
+        """
+        print("Action: Generating signature...")
+        signature = generate_thinking_signature()
+        
+        print(f"Generated signature: {signature}")
+        # Remove prefix and check remaining chars are hex
+        hex_part = signature[4:]  # Remove "sig_"
+        assert all(c in '0123456789abcdef' for c in hex_part)
+        print("✓ Signature contains only valid hex characters")
+
+
+# ==================================================================================================
+# Tests for stream_with_first_token_retry_anthropic()
+# ==================================================================================================
+
+class TestStreamWithFirstTokenRetryAnthropic:
+    """
+    Tests for stream_with_first_token_retry_anthropic() function.
+    
+    This function wraps stream_kiro_to_anthropic with automatic retry
+    on first token timeout. It uses the generic stream_with_first_token_retry
+    from streaming_core.py with Anthropic-specific error formatting.
+    """
+    
+    @pytest.mark.asyncio
+    async def test_yields_chunks_on_success(self, mock_model_cache, mock_auth_manager):
+        """
+        What it does: Yields chunks on successful streaming.
+        Goal: Verify normal operation without retries.
+        """
+        print("Setup: Mock successful request...")
+        
+        mock_response = AsyncMock()
+        mock_response.status_code = 200
+        mock_response.aclose = AsyncMock()
+        
+        async def mock_make_request():
+            return mock_response
+        
+        async def mock_parse_kiro_stream(*args, **kwargs):
+            yield KiroEvent(type="content", content="Hello")
+        
+        print("Action: Streaming with retry wrapper...")
+        chunks = []
+        
+        with patch('kiro.streaming_anthropic.parse_kiro_stream', mock_parse_kiro_stream):
+            with patch('kiro.streaming_anthropic.parse_bracket_tool_calls', return_value=[]):
+                async for chunk in stream_with_first_token_retry_anthropic(
+                    make_request=mock_make_request,
+                    model="claude-sonnet-4",
+                    model_cache=mock_model_cache,
+                    auth_manager=mock_auth_manager,
+                    max_retries=3,
+                    first_token_timeout=30
+                ):
+                    chunks.append(chunk)
+        
+        print(f"Received {len(chunks)} chunks")
+        assert len(chunks) > 0
+        assert any("message_start" in c for c in chunks)
+        print("✓ Chunks yielded on success")
+    
+    @pytest.mark.asyncio
+    async def test_retries_on_first_token_timeout(self, mock_model_cache, mock_auth_manager):
+        """
+        What it does: Retries on first token timeout.
+        Goal: Verify retry logic is triggered.
+        """
+        from kiro.streaming_core import FirstTokenTimeoutError
+        
+        print("Setup: Mock request that times out then succeeds...")
+        
+        call_count = 0
+        
+        async def mock_make_request():
+            nonlocal call_count
+            call_count += 1
+            response = AsyncMock()
+            response.status_code = 200
+            response.aclose = AsyncMock()
+            return response
+        
+        async def mock_stream_kiro_to_anthropic(*args, **kwargs):
+            nonlocal call_count
+            if call_count == 1:
+                raise FirstTokenTimeoutError("Timeout on first attempt")
+            yield "event: message_start\ndata: {}\n\n"
+            yield "event: message_stop\ndata: {}\n\n"
+        
+        print("Action: Streaming with retry on timeout...")
+        chunks = []
+        
+        with patch('kiro.streaming_anthropic.stream_kiro_to_anthropic', mock_stream_kiro_to_anthropic):
+            async for chunk in stream_with_first_token_retry_anthropic(
+                make_request=mock_make_request,
+                model="claude-sonnet-4",
+                model_cache=mock_model_cache,
+                auth_manager=mock_auth_manager,
+                max_retries=3,
+                first_token_timeout=30
+            ):
+                chunks.append(chunk)
+        
+        print(f"Call count: {call_count}")
+        print(f"Received {len(chunks)} chunks")
+        
+        assert call_count == 2  # First timeout, second success
+        assert len(chunks) > 0
+        print("✓ Retry on timeout works correctly")
+    
+    @pytest.mark.asyncio
+    async def test_raises_anthropic_error_after_all_retries(self, mock_model_cache, mock_auth_manager):
+        """
+        What it does: Raises Anthropic-formatted error after all retries exhausted.
+        Goal: Verify error format matches Anthropic API.
+        """
+        from kiro.streaming_core import FirstTokenTimeoutError
+        
+        print("Setup: Mock request that always times out...")
+        
+        async def mock_make_request():
+            response = AsyncMock()
+            response.status_code = 200
+            response.aclose = AsyncMock()
+            return response
+        
+        async def mock_stream_kiro_to_anthropic(*args, **kwargs):
+            raise FirstTokenTimeoutError("Timeout!")
+            yield  # Make it a generator
+        
+        print("Action: Streaming with all retries failing...")
+        
+        with patch('kiro.streaming_anthropic.stream_kiro_to_anthropic', mock_stream_kiro_to_anthropic):
+            with pytest.raises(Exception) as exc_info:
+                async for chunk in stream_with_first_token_retry_anthropic(
+                    make_request=mock_make_request,
+                    model="claude-sonnet-4",
+                    model_cache=mock_model_cache,
+                    auth_manager=mock_auth_manager,
+                    max_retries=2,
+                    first_token_timeout=30
+                ):
+                    pass
+        
+        print(f"Exception: {exc_info.value}")
+        
+        # Error should be in Anthropic format (JSON)
+        error_json = json.loads(str(exc_info.value))
+        assert error_json["type"] == "error"
+        assert error_json["error"]["type"] == "timeout_error"
+        assert "30" in error_json["error"]["message"]
+        print("✓ Anthropic-formatted error raised after all retries")
+    
+    @pytest.mark.asyncio
+    async def test_raises_anthropic_error_on_http_error(self, mock_model_cache, mock_auth_manager):
+        """
+        What it does: Raises Anthropic-formatted error on HTTP error.
+        Goal: Verify HTTP errors are formatted correctly.
+        """
+        print("Setup: Mock request that returns HTTP error...")
+        
+        async def mock_make_request():
+            response = AsyncMock()
+            response.status_code = 500
+            response.aread = AsyncMock(return_value=b"Internal Server Error")
+            response.aclose = AsyncMock()
+            return response
+        
+        print("Action: Streaming with HTTP error...")
+        
+        with pytest.raises(Exception) as exc_info:
+            async for chunk in stream_with_first_token_retry_anthropic(
+                make_request=mock_make_request,
+                model="claude-sonnet-4",
+                model_cache=mock_model_cache,
+                auth_manager=mock_auth_manager,
+                max_retries=2,
+                first_token_timeout=30
+            ):
+                pass
+        
+        print(f"Exception: {exc_info.value}")
+        
+        # Error should be in Anthropic format (JSON)
+        error_json = json.loads(str(exc_info.value))
+        assert error_json["type"] == "error"
+        assert error_json["error"]["type"] == "api_error"
+        assert "Upstream API error" in error_json["error"]["message"]
+        print("✓ Anthropic-formatted error raised on HTTP error")
+    
+    @pytest.mark.asyncio
+    async def test_passes_request_messages_to_stream(self, mock_model_cache, mock_auth_manager):
+        """
+        What it does: Passes request_messages to underlying stream function.
+        Goal: Verify token counting parameters are forwarded.
+        """
+        print("Setup: Mock request with messages...")
+        
+        mock_response = AsyncMock()
+        mock_response.status_code = 200
+        mock_response.aclose = AsyncMock()
+        
+        async def mock_make_request():
+            return mock_response
+        
+        captured_kwargs = {}
+        
+        async def mock_stream_kiro_to_anthropic(*args, **kwargs):
+            captured_kwargs.update(kwargs)
+            yield "event: message_start\ndata: {}\n\n"
+            yield "event: message_stop\ndata: {}\n\n"
+        
+        request_messages = [{"role": "user", "content": "Hello"}]
+        
+        print("Action: Streaming with request_messages...")
+        
+        with patch('kiro.streaming_anthropic.stream_kiro_to_anthropic', mock_stream_kiro_to_anthropic):
+            async for chunk in stream_with_first_token_retry_anthropic(
+                make_request=mock_make_request,
+                model="claude-sonnet-4",
+                model_cache=mock_model_cache,
+                auth_manager=mock_auth_manager,
+                request_messages=request_messages
+            ):
+                pass
+        
+        print(f"Captured kwargs: {captured_kwargs}")
+        assert captured_kwargs.get("request_messages") == request_messages
+        print("✓ request_messages passed to stream function")
+    
+    @pytest.mark.asyncio
+    async def test_uses_configured_max_retries(self, mock_model_cache, mock_auth_manager):
+        """
+        What it does: Uses configured max_retries value.
+        Goal: Verify max_retries parameter is respected.
+        """
+        from kiro.streaming_core import FirstTokenTimeoutError
+        
+        print("Setup: Mock request that always times out...")
+        
+        call_count = 0
+        
+        async def mock_make_request():
+            nonlocal call_count
+            call_count += 1
+            response = AsyncMock()
+            response.status_code = 200
+            response.aclose = AsyncMock()
+            return response
+        
+        async def mock_stream_kiro_to_anthropic(*args, **kwargs):
+            raise FirstTokenTimeoutError("Timeout!")
+            yield  # Make it a generator
+        
+        print("Action: Streaming with max_retries=5...")
+        
+        with patch('kiro.streaming_anthropic.stream_kiro_to_anthropic', mock_stream_kiro_to_anthropic):
+            try:
+                async for chunk in stream_with_first_token_retry_anthropic(
+                    make_request=mock_make_request,
+                    model="claude-sonnet-4",
+                    model_cache=mock_model_cache,
+                    auth_manager=mock_auth_manager,
+                    max_retries=5,
+                    first_token_timeout=30
+                ):
+                    pass
+            except Exception:
+                pass
+        
+        print(f"Call count: {call_count}")
+        assert call_count == 5  # Should try exactly 5 times
+        print("✓ max_retries parameter respected")

@@ -102,12 +102,38 @@ class Tool(BaseModel):
     """
     Tool in OpenAI format.
     
+    Supports both standard OpenAI format and Cursor's flat format:
+    
+    OpenAI format:
+    {
+        "type": "function",
+        "function": {"name": "...", "description": "...", "parameters": {...}}
+    }
+    
+    Cursor flat format:
+    {
+        "name": "...",
+        "description": "...",
+        "input_schema": {...}
+    }
+    
     Attributes:
         type: Tool type (usually "function")
-        function: Function description
+        function: Function description (OpenAI format)
+        name: Tool name (Cursor flat format)
+        description: Tool description (Cursor flat format)
+        input_schema: JSON Schema for parameters (Cursor flat format)
     """
-    type: str = "function"
-    function: ToolFunction
+    # OpenAI standard format
+    type: Optional[str] = "function"
+    function: Optional[ToolFunction] = None
+    
+    # Cursor flat format fields
+    name: Optional[str] = None
+    description: Optional[str] = None
+    input_schema: Optional[Dict[str, Any]] = None
+    
+    model_config = {"extra": "allow"}
 
 
 class ChatCompletionRequest(BaseModel):

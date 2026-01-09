@@ -93,9 +93,35 @@ class InterceptHandler(logging.Handler):
     
     This allows capturing logs from uvicorn, FastAPI and other libraries
     that use standard logging instead of loguru.
+    
+    Also filters out noisy shutdown-related exceptions (CancelledError, KeyboardInterrupt)
+    that are normal during Ctrl+C but uvicorn logs as ERROR.
     """
     
+    # Exceptions that are normal during shutdown and should not be logged as errors
+    SHUTDOWN_EXCEPTIONS = (
+        "CancelledError",
+        "KeyboardInterrupt",
+        "asyncio.exceptions.CancelledError",
+    )
+    
     def emit(self, record: logging.LogRecord) -> None:
+        # Filter out shutdown-related exceptions that uvicorn logs as ERROR
+        # These are normal during Ctrl+C and don't need to spam the console
+        if record.exc_info:
+            exc_type = record.exc_info[0]
+            if exc_type is not None:
+                exc_name = exc_type.__name__
+                if exc_name in self.SHUTDOWN_EXCEPTIONS:
+                    # Suppress the full traceback, just log a simple message
+                    logger.info("Server shutdown in progress...")
+                    return
+        
+        # Also filter by message content for cases where exc_info is not set
+        msg = record.getMessage()
+        if any(exc in msg for exc in self.SHUTDOWN_EXCEPTIONS):
+            return
+        
         # Get the corresponding loguru level
         try:
             level = logger.level(record.levelname).name
@@ -275,7 +301,8 @@ async def lifespan(app: FastAPI):
     app.state.http_client = httpx.AsyncClient(
         limits=limits,
         timeout=timeout,
-        follow_redirects=True
+        follow_redirects=True,
+        verify=False
     )
     logger.info("Shared HTTP client created with connection pooling")
     
@@ -330,6 +357,7 @@ app.add_exception_handler(RequestValidationError, validation_exception_handler)
 
 # --- Route Registration ---
 # OpenAI-compatible API: /v1/models, /v1/chat/completions
+# Also supports Cursor's flat tool format automatically
 app.include_router(openai_router)
 
 # Anthropic-compatible API: /v1/messages

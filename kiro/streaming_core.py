@@ -32,7 +32,7 @@ to convert Kiro events to their respective SSE formats.
 
 import asyncio
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Callable, Awaitable, Dict, List, Optional, Tuple
 
 import httpx
 from loguru import logger
@@ -40,6 +40,7 @@ from loguru import logger
 from kiro.parsers import AwsEventStreamParser, parse_bracket_tool_calls, deduplicate_tool_calls
 from kiro.config import (
     FIRST_TOKEN_TIMEOUT,
+    FIRST_TOKEN_MAX_RETRIES,
     FAKE_REASONING_ENABLED,
     FAKE_REASONING_HANDLING,
 )
@@ -359,3 +360,135 @@ def calculate_tokens_from_context_usage(
     
     # Fallback: no context usage data
     return 0, completion_tokens, "unknown", "tiktoken"
+
+
+# ==================================================================================================
+# First Token Retry Logic
+# ==================================================================================================
+
+async def stream_with_first_token_retry(
+    make_request: Callable[[], Awaitable[httpx.Response]],
+    stream_processor: Callable[[httpx.Response], AsyncGenerator[str, None]],
+    max_retries: int = FIRST_TOKEN_MAX_RETRIES,
+    first_token_timeout: float = FIRST_TOKEN_TIMEOUT,
+    on_http_error: Optional[Callable[[int, str], Exception]] = None,
+    on_all_retries_failed: Optional[Callable[[int, float], Exception]] = None,
+) -> AsyncGenerator[str, None]:
+    """
+    Generic streaming with automatic retry on first token timeout.
+    
+    If model doesn't respond within first_token_timeout seconds,
+    request is cancelled and a new one is made. Maximum max_retries attempts.
+    
+    This is seamless for user - they just see a delay,
+    but eventually get a response (or error after all attempts).
+    
+    Args:
+        make_request: Function to create new HTTP request (returns httpx.Response)
+        stream_processor: Function that processes response and yields SSE strings.
+                         Must use parse_kiro_stream internally for timeout handling.
+        max_retries: Maximum number of attempts
+        first_token_timeout: First token wait timeout (seconds)
+        on_http_error: Optional callback to create exception for HTTP errors.
+                      Receives (status_code, error_text), returns Exception.
+                      If None, raises generic Exception.
+        on_all_retries_failed: Optional callback to create exception when all retries fail.
+                              Receives (max_retries, timeout), returns Exception.
+                              If None, raises generic Exception.
+    
+    Yields:
+        Strings in SSE format (format depends on stream_processor)
+    
+    Raises:
+        Exception from on_http_error or on_all_retries_failed callbacks
+    
+    Example:
+        >>> async def make_req():
+        ...     return await http_client.request_with_retry("POST", url, payload, stream=True)
+        >>> async def process(response):
+        ...     async for chunk in stream_kiro_to_openai(response, ...):
+        ...         yield chunk
+        >>> async for chunk in stream_with_first_token_retry(make_req, process):
+        ...     print(chunk)
+    """
+    last_error: Optional[Exception] = None
+    
+    for attempt in range(max_retries):
+        response: Optional[httpx.Response] = None
+        try:
+            # Make request
+            if attempt > 0:
+                logger.warning(f"Retry attempt {attempt + 1}/{max_retries} after first token timeout")
+            
+            response = await make_request()
+            
+            if response.status_code != 200:
+                # Error from API - close response and raise exception
+                try:
+                    error_content = await response.aread()
+                    error_text = error_content.decode('utf-8', errors='replace')
+                except Exception:
+                    error_text = "Unknown error"
+                
+                try:
+                    await response.aclose()
+                except Exception:
+                    pass
+                
+                logger.error(f"Error from Kiro API: {response.status_code} - {error_text}")
+                
+                if on_http_error:
+                    raise on_http_error(response.status_code, error_text)
+                else:
+                    raise Exception(f"Upstream API error ({response.status_code}): {error_text}")
+            
+            # Try to stream with first token timeout
+            async for chunk in stream_processor(response):
+                yield chunk
+            
+            # Successfully completed - exit
+            return
+            
+        except FirstTokenTimeoutError as e:
+            last_error = e
+            logger.warning(
+                f"[FirstTokenTimeout] Attempt {attempt + 1}/{max_retries} failed - "
+                f"model did not respond within {first_token_timeout}s"
+            )
+            
+            # Close current response if open
+            if response:
+                try:
+                    await response.aclose()
+                except Exception:
+                    pass
+            
+            # Continue to next attempt
+            continue
+            
+        except Exception as e:
+            # Other errors - no retry, propagate
+            # Use positional argument to avoid loguru interpreting curly braces in error message as format placeholders
+            # f-string with repr() doesn't work because loguru still sees {type} inside the string
+            error_msg = str(e) if str(e) else "(empty message)"
+            logger.error("Unexpected error during streaming: {}", error_msg, exc_info=True)
+            if response:
+                try:
+                    await response.aclose()
+                except Exception:
+                    pass
+            raise
+    
+    # All attempts exhausted - raise error
+    logger.error(
+        f"[FirstTokenTimeout] All {max_retries} attempts exhausted - "
+        f"model never responded within {first_token_timeout}s per attempt"
+    )
+    
+    if on_all_retries_failed:
+        raise on_all_retries_failed(max_retries, first_token_timeout)
+    else:
+        raise Exception(
+            f"Model did not respond within {first_token_timeout}s after {max_retries} attempts. "
+            "Please try again."
+        )

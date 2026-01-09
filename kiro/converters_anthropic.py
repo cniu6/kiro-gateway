@@ -33,6 +33,7 @@ from kiro.models_anthropic import (
     AnthropicMessagesRequest,
     AnthropicMessage,
     AnthropicTool,
+    SystemPrompt,
 )
 from kiro.converters_core import (
     UnifiedMessage,
@@ -70,6 +71,44 @@ def convert_anthropic_content_to_text(content: Any) -> str:
         return "".join(text_parts)
     
     return str(content) if content else ""
+
+
+def extract_system_prompt(system: Any) -> str:
+    """
+    Extracts system prompt text from Anthropic system field.
+    
+    Anthropic API supports system in two formats:
+    1. String: "You are helpful"
+    2. List of content blocks: [{"type": "text", "text": "...", "cache_control": {...}}]
+    
+    The second format is used for prompt caching with cache_control.
+    We extract only the text, ignoring cache_control (not supported by Kiro).
+    
+    Args:
+        system: System prompt in string or list format
+    
+    Returns:
+        Extracted system prompt as string
+    """
+    if system is None:
+        return ""
+    
+    if isinstance(system, str):
+        return system
+    
+    if isinstance(system, list):
+        text_parts = []
+        for block in system:
+            if isinstance(block, dict):
+                # Handle {"type": "text", "text": "...", "cache_control": {...}}
+                if block.get("type") == "text":
+                    text_parts.append(block.get("text", ""))
+            elif hasattr(block, "type") and block.type == "text":
+                # Handle Pydantic model
+                text_parts.append(getattr(block, "text", ""))
+        return "\n".join(text_parts)
+    
+    return str(system)
 
 
 def extract_tool_results_from_anthropic_content(content: Any) -> List[Dict[str, Any]]:
@@ -115,7 +154,6 @@ def extract_tool_results_from_anthropic_content(content: Any) -> List[Dict[str, 
                 "tool_use_id": tool_use_id,
                 "content": result_content or "(empty result)"
             })
-            logger.debug(f"Extracted tool result for tool_use_id={tool_use_id}")
     
     return tool_results
 
@@ -163,7 +201,6 @@ def extract_tool_uses_from_anthropic_content(content: Any) -> List[Dict[str, Any
                     "arguments": tool_input if isinstance(tool_input, str) else tool_input
                 }
             })
-            logger.debug(f"Extracted tool use: {tool_name} (id={tool_id})")
     
     return tool_calls
 
@@ -184,6 +221,8 @@ def convert_anthropic_messages(messages: List[AnthropicMessage]) -> List[Unified
         List of messages in unified format
     """
     unified_messages = []
+    total_tool_calls = 0
+    total_tool_results = 0
     
     for msg in messages:
         role = msg.role
@@ -200,13 +239,13 @@ def convert_anthropic_messages(messages: List[AnthropicMessage]) -> List[Unified
             # Assistant messages may contain tool_use blocks
             tool_calls = extract_tool_uses_from_anthropic_content(content)
             if tool_calls:
-                logger.debug(f"Found {len(tool_calls)} tool calls in assistant message")
+                total_tool_calls += len(tool_calls)
         
         elif role == "user":
             # User messages may contain tool_result blocks
             tool_results = extract_tool_results_from_anthropic_content(content)
             if tool_results:
-                logger.debug(f"Found {len(tool_results)} tool results in user message")
+                total_tool_results += len(tool_results)
         
         unified_msg = UnifiedMessage(
             role=role,
@@ -216,7 +255,47 @@ def convert_anthropic_messages(messages: List[AnthropicMessage]) -> List[Unified
         )
         unified_messages.append(unified_msg)
     
+    # Log summary if any tool content was found
+    if total_tool_calls > 0 or total_tool_results > 0:
+        logger.debug(
+            f"Converted {len(messages)} Anthropic messages: "
+            f"{total_tool_calls} tool_calls, {total_tool_results} tool_results"
+        )
+    
     return unified_messages
+
+
+def convert_system_prompt(system: Optional[SystemPrompt]) -> str:
+    """
+    Converts Anthropic system prompt to a plain string.
+    
+    Anthropic system can be:
+    - String: "You are a helpful assistant"
+    - List of content blocks: [{"type": "text", "text": "...", "cache_control": {...}}]
+    
+    Args:
+        system: Anthropic system prompt (string or list of content blocks)
+    
+    Returns:
+        System prompt as a plain string
+    """
+    if system is None:
+        return ""
+    
+    if isinstance(system, str):
+        return system
+    
+    if isinstance(system, list):
+        text_parts = []
+        for block in system:
+            if isinstance(block, dict):
+                if block.get("type") == "text":
+                    text_parts.append(block.get("text", ""))
+            elif hasattr(block, "type") and block.type == "text":
+                text_parts.append(block.text)
+        return "\n".join(text_parts)
+    
+    return str(system) if system else ""
 
 
 def convert_anthropic_tools(tools: Optional[List[AnthropicTool]]) -> Optional[List[UnifiedTool]]:
@@ -285,8 +364,8 @@ def anthropic_to_kiro(
     # Convert tools to unified format
     unified_tools = convert_anthropic_tools(request.tools)
     
-    # System prompt is already separate in Anthropic format!
-    system_prompt = request.system or ""
+    # System prompt - convert from string or list of content blocks (for prompt caching)
+    system_prompt = extract_system_prompt(request.system)
     
     # Get internal model ID
     model_id = get_internal_model_id(request.model)

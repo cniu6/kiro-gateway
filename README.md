@@ -22,9 +22,11 @@
 |---------|-------------|
 | 🔌 **OpenAI-compatible API** | Works with any OpenAI-compatible tool |
 | 🔌 **Anthropic-compatible API** | Native `/v1/messages` endpoint |
+| 🖱️ **Cursor IDE Support** | Full compatibility with Cursor's tool format |
+| 🤖 **Claude Code Support** | Full compatibility with Claude Code CLI |
 | 🧠 **Extended Thinking** | See how the model reasons before answering |
 | 💬 **Full message history** | Passes complete conversation context |
-| 🛠️ **Tool Calling** | Supports function calling |
+| 🛠️ **Tool Calling** | Supports function calling (OpenAI & Anthropic formats) |
 | 📡 **Streaming** | Full SSE streaming support |
 | 🔄 **Retry Logic** | Automatic retries on errors (403, 429, 5xx) |
 | 📋 **Extended model list** | Including versioned models |
@@ -205,6 +207,105 @@ Both key formats are supported for compatibility with different kiro-cli version
 
 If you need to manually extract the refresh token (e.g., for debugging), you can intercept Kiro IDE traffic:
 - Look for requests to: `prod.us-east-1.auth.desktop.kiro.dev/refreshToken`
+
+</details>
+
+---
+
+## 🖱️ Cursor IDE Support
+
+Kiro Gateway fully supports Cursor IDE out of the box. No special configuration needed.
+
+### Configuration in Cursor
+
+1. Open Cursor Settings → Models → Add Model
+2. Configure:
+   - **API Base URL**: `http://localhost:8000/v1`
+   - **API Key**: Your `PROXY_API_KEY` from `.env`
+   - **Model**: `claude-sonnet-4-5` (or any available model)
+
+### How It Works
+
+Cursor uses a slightly different API format than standard OpenAI:
+
+| Feature | OpenAI Format | Cursor Format |
+|---------|---------------|---------------|
+| Tool Definition | `{type: "function", function: {...}}` | `{name, description, input_schema}` |
+| Tool Calls | `tool_calls` field | `content[type="tool_use"]` |
+| Tool Results | `role: "tool"` message | `content[type="tool_result"]` |
+
+The gateway automatically detects and handles both formats transparently.
+
+<details>
+<summary>🔧 Technical Details</summary>
+
+The gateway performs the following conversions:
+
+1. **Tool Definitions**: Accepts both nested OpenAI format and flat Cursor format
+2. **Tool Calls**: Extracts from both `tool_calls` field and `content` array
+3. **Tool Results**: Converts `tool_use_id` to `toolUseId` for Kiro API
+4. **JSON Schema**: Sanitizes unsupported fields (`anyOf`, `title`, `default`, etc.)
+
+See [docs/CURSOR_SUPPORT_IMPLEMENTATION.md](docs/CURSOR_SUPPORT_IMPLEMENTATION.md) for full implementation details.
+
+</details>
+
+---
+
+## 🤖 Claude Code Support
+
+Kiro Gateway fully supports [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (Anthropic's official CLI).
+
+### Configuration
+
+```bash
+# Set Claude Code to use your gateway
+claude config set --global apiUrl http://localhost:8000
+claude config set --global apiKey your-proxy-api-key
+```
+
+### How It Works
+
+Claude Code uses the Anthropic Messages API (`/v1/messages`) with some extended features:
+
+| Feature | Standard Anthropic | Claude Code |
+|---------|-------------------|-------------|
+| System Prompt | `"system": "string"` | `"system": [{"type": "text", "text": "...", "cache_control": {...}}]` |
+| Cache Control | Not used | `{"type": "ephemeral"}` on content blocks |
+
+The gateway automatically handles both formats:
+
+1. **String format**: Standard Anthropic API — passed through as-is
+2. **Array format**: Claude Code style — text blocks are extracted and joined
+
+<details>
+<summary>🔧 Technical Details</summary>
+
+Claude Code sends system prompts as an array of content blocks with `cache_control`:
+
+```json
+{
+  "system": [
+    {"type": "text", "text": "You are Claude Code...", "cache_control": {"type": "ephemeral"}},
+    {"type": "text", "text": "Additional instructions...", "cache_control": {"type": "ephemeral"}}
+  ]
+}
+```
+
+The gateway converts this to a plain string by:
+1. Extracting `text` from each block with `type: "text"`
+2. Joining them with newlines
+3. Ignoring `cache_control` (not supported by Kiro API)
+
+This conversion happens in `converters_anthropic.py`:
+
+```python
+def convert_system_prompt(system: Optional[SystemPrompt]) -> str:
+    if isinstance(system, list):
+        text_parts = [block.get("text", "") for block in system if block.get("type") == "text"]
+        return "\n".join(text_parts)
+    return system or ""
+```
 
 </details>
 

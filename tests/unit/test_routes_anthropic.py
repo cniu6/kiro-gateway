@@ -714,16 +714,28 @@ class TestMessagesOptionalParams:
         Purpose: Ensure streaming mode is supported.
         """
         print("Action: POST /v1/messages with stream=true...")
-        response = test_client.post(
-            "/v1/messages",
-            headers={"x-api-key": valid_proxy_api_key},
-            json={
-                "model": "claude-sonnet-4-5",
-                "max_tokens": 1024,
-                "messages": [{"role": "user", "content": "Hello"}],
-                "stream": True
-            }
-        )
+        
+        # Mock the streaming function to avoid real HTTP requests
+        async def mock_stream(*args, **kwargs):
+            yield 'event: message_start\ndata: {"type":"message_start"}\n\n'
+            yield 'event: message_stop\ndata: {"type":"message_stop"}\n\n'
+        
+        # Create mock response for HTTP client
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        
+        with patch('kiro.routes_anthropic.stream_kiro_to_anthropic', mock_stream), \
+             patch('kiro.http_client.KiroHttpClient.request_with_retry', return_value=mock_response):
+            response = test_client.post(
+                "/v1/messages",
+                headers={"x-api-key": valid_proxy_api_key},
+                json={
+                    "model": "claude-sonnet-4-5",
+                    "max_tokens": 1024,
+                    "messages": [{"role": "user", "content": "Hello"}],
+                    "stream": True
+                }
+            )
         
         print(f"Status: {response.status_code}")
         assert response.status_code != 422

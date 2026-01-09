@@ -17,6 +17,8 @@ from unittest.mock import patch
 from kiro.converters_core import (
     extract_text_content,
     merge_adjacent_messages,
+    ensure_assistant_before_tool_results,
+    strip_all_tool_content,
     build_kiro_history,
     process_tools_with_long_descriptions,
     inject_thinking_tags,
@@ -24,6 +26,7 @@ from kiro.converters_core import (
     extract_tool_uses_from_message,
     sanitize_json_schema,
     convert_tools_to_kiro_format,
+    convert_tool_results_to_kiro_format,
     UnifiedMessage,
     UnifiedTool,
 )
@@ -394,6 +397,352 @@ class TestMergeAdjacentMessages:
 
 
 # ==================================================================================================
+# Tests for ensure_assistant_before_tool_results
+# ==================================================================================================
+
+class TestEnsureAssistantBeforeToolResults:
+    """
+    Tests for ensure_assistant_before_tool_results function.
+    
+    This function handles the case when clients (like Cline/Roo) send truncated
+    conversations with tool_results but without the preceding assistant message
+    that contains the tool_calls. Since we don't know the original tool name,
+    we strip the orphaned tool_results to avoid Kiro API rejection.
+    """
+    
+    def test_returns_empty_list_for_empty_input(self):
+        """
+        What it does: Verifies empty list handling.
+        Purpose: Ensure empty input returns empty output.
+        """
+        print("Setup: Empty list...")
+        
+        print("Action: Processing messages...")
+        result, stripped = ensure_assistant_before_tool_results([])
+        
+        print(f"Comparing result: Expected [], Got {result}")
+        assert result == []
+        assert stripped is False
+    
+    def test_preserves_messages_without_tool_results(self):
+        """
+        What it does: Verifies messages without tool_results are unchanged.
+        Purpose: Ensure regular messages pass through unmodified.
+        """
+        print("Setup: Messages without tool_results...")
+        messages = [
+            UnifiedMessage(role="user", content="Hello"),
+            UnifiedMessage(role="assistant", content="Hi there"),
+            UnifiedMessage(role="user", content="How are you?")
+        ]
+        
+        print("Action: Processing messages...")
+        result, stripped = ensure_assistant_before_tool_results(messages)
+        
+        print(f"Comparing length: Expected 3, Got {len(result)}")
+        assert len(result) == 3
+        assert result[0].content == "Hello"
+        assert result[1].content == "Hi there"
+        assert result[2].content == "How are you?"
+        assert stripped is False
+    
+    def test_preserves_tool_results_with_preceding_assistant(self):
+        """
+        What it does: Verifies tool_results are preserved when assistant with tool_calls precedes.
+        Purpose: Ensure valid tool_results are not stripped.
+        """
+        print("Setup: Valid conversation with assistant tool_calls followed by user tool_results...")
+        messages = [
+            UnifiedMessage(role="user", content="Call a tool"),
+            UnifiedMessage(
+                role="assistant",
+                content="",
+                tool_calls=[{
+                    "id": "call_123",
+                    "type": "function",
+                    "function": {"name": "get_weather", "arguments": '{"location": "Moscow"}'}
+                }]
+            ),
+            UnifiedMessage(
+                role="user",
+                content="",
+                tool_results=[{
+                    "type": "tool_result",
+                    "tool_use_id": "call_123",
+                    "content": "Weather is sunny"
+                }]
+            )
+        ]
+        
+        print("Action: Processing messages...")
+        result, stripped = ensure_assistant_before_tool_results(messages)
+        
+        print(f"Result: {result}")
+        print(f"Comparing length: Expected 3, Got {len(result)}")
+        assert len(result) == 3
+        
+        print("Checking that tool_results are preserved...")
+        assert result[2].tool_results is not None
+        assert len(result[2].tool_results) == 1
+        assert result[2].tool_results[0]["tool_use_id"] == "call_123"
+        assert stripped is False
+    
+    def test_strips_orphaned_tool_results_at_start(self):
+        """
+        What it does: Verifies orphaned tool_results at the start are stripped.
+        Purpose: Ensure tool_results without preceding assistant are removed.
+        
+        This is the critical bug fix test - when a client sends a truncated
+        conversation starting with tool_results, they should be stripped.
+        """
+        print("Setup: Conversation starting with orphaned tool_results...")
+        messages = [
+            UnifiedMessage(
+                role="user",
+                content="",
+                tool_results=[{
+                    "type": "tool_result",
+                    "tool_use_id": "call_orphan",
+                    "content": "Orphaned result"
+                }]
+            ),
+            UnifiedMessage(role="user", content="Continue the conversation")
+        ]
+        
+        print("Action: Processing messages...")
+        result, stripped = ensure_assistant_before_tool_results(messages)
+        
+        print(f"Result: {result}")
+        print(f"Comparing length: Expected 2, Got {len(result)}")
+        assert len(result) == 2
+        
+        print("Checking that orphaned tool_results are stripped...")
+        assert result[0].tool_results is None
+        assert result[0].content == ""  # Content preserved
+        assert result[1].content == "Continue the conversation"
+        assert stripped is True
+    
+    def test_strips_tool_results_after_assistant_without_tool_calls(self):
+        """
+        What it does: Verifies tool_results are stripped when preceding assistant has no tool_calls.
+        Purpose: Ensure tool_results require assistant with tool_calls, not just any assistant.
+        """
+        print("Setup: Assistant without tool_calls followed by user with tool_results...")
+        messages = [
+            UnifiedMessage(role="user", content="Hello"),
+            UnifiedMessage(role="assistant", content="Let me think...", tool_calls=None),
+            UnifiedMessage(
+                role="user",
+                content="",
+                tool_results=[{
+                    "type": "tool_result",
+                    "tool_use_id": "call_123",
+                    "content": "Result"
+                }]
+            )
+        ]
+        
+        print("Action: Processing messages...")
+        result, stripped = ensure_assistant_before_tool_results(messages)
+        
+        print(f"Result: {result}")
+        print("Checking that tool_results are stripped...")
+        assert result[2].tool_results is None
+        assert stripped is True
+    
+    def test_strips_tool_results_after_user_message(self):
+        """
+        What it does: Verifies tool_results are stripped when preceded by user message.
+        Purpose: Ensure tool_results require assistant, not user.
+        """
+        print("Setup: User message followed by user with tool_results...")
+        messages = [
+            UnifiedMessage(role="user", content="First message"),
+            UnifiedMessage(
+                role="user",
+                content="",
+                tool_results=[{
+                    "type": "tool_result",
+                    "tool_use_id": "call_123",
+                    "content": "Result"
+                }]
+            )
+        ]
+        
+        print("Action: Processing messages...")
+        result, stripped = ensure_assistant_before_tool_results(messages)
+        
+        print(f"Result: {result}")
+        print("Checking that tool_results are stripped...")
+        assert result[1].tool_results is None
+        assert stripped is True
+    
+    def test_preserves_content_when_stripping_tool_results(self):
+        """
+        What it does: Verifies message content is preserved when tool_results are stripped.
+        Purpose: Ensure only tool_results are removed, not the entire message.
+        """
+        print("Setup: Message with both content and orphaned tool_results...")
+        messages = [
+            UnifiedMessage(
+                role="user",
+                content="Here is some context",
+                tool_results=[{
+                    "type": "tool_result",
+                    "tool_use_id": "call_123",
+                    "content": "Result"
+                }]
+            )
+        ]
+        
+        print("Action: Processing messages...")
+        result, stripped = ensure_assistant_before_tool_results(messages)
+        
+        print(f"Result: {result}")
+        print("Checking that content is preserved...")
+        assert result[0].content == "Here is some context"
+        assert result[0].tool_results is None
+        assert stripped is True
+    
+    def test_preserves_tool_calls_when_stripping_tool_results(self):
+        """
+        What it does: Verifies tool_calls are preserved when tool_results are stripped.
+        Purpose: Ensure only tool_results are removed, tool_calls stay.
+        """
+        print("Setup: Message with tool_calls and orphaned tool_results...")
+        messages = [
+            UnifiedMessage(
+                role="assistant",
+                content="",
+                tool_calls=[{
+                    "id": "call_new",
+                    "type": "function",
+                    "function": {"name": "new_tool", "arguments": "{}"}
+                }],
+                tool_results=[{  # This shouldn't happen but let's test it
+                    "type": "tool_result",
+                    "tool_use_id": "call_old",
+                    "content": "Old result"
+                }]
+            )
+        ]
+        
+        print("Action: Processing messages...")
+        result, stripped = ensure_assistant_before_tool_results(messages)
+        
+        print(f"Result: {result}")
+        print("Checking that tool_calls are preserved...")
+        assert result[0].tool_calls is not None
+        assert len(result[0].tool_calls) == 1
+        assert result[0].tool_results is None
+        assert stripped is True
+    
+    def test_handles_multiple_orphaned_tool_results(self):
+        """
+        What it does: Verifies multiple orphaned tool_results are all stripped.
+        Purpose: Ensure all tool_results in the list are removed.
+        """
+        print("Setup: Message with multiple orphaned tool_results...")
+        messages = [
+            UnifiedMessage(
+                role="user",
+                content="",
+                tool_results=[
+                    {"type": "tool_result", "tool_use_id": "call_1", "content": "Result 1"},
+                    {"type": "tool_result", "tool_use_id": "call_2", "content": "Result 2"},
+                    {"type": "tool_result", "tool_use_id": "call_3", "content": "Result 3"}
+                ]
+            )
+        ]
+        
+        print("Action: Processing messages...")
+        result, stripped = ensure_assistant_before_tool_results(messages)
+        
+        print(f"Result: {result}")
+        print("Checking that all tool_results are stripped...")
+        assert result[0].tool_results is None
+        assert stripped is True
+    
+    def test_mixed_valid_and_orphaned_tool_results(self):
+        """
+        What it does: Verifies correct handling of mixed valid and orphaned tool_results.
+        Purpose: Ensure valid tool_results are preserved while orphaned are stripped.
+        """
+        print("Setup: Mixed conversation with valid and orphaned tool_results...")
+        messages = [
+            # Orphaned tool_results at start
+            UnifiedMessage(
+                role="user",
+                content="",
+                tool_results=[{
+                    "type": "tool_result",
+                    "tool_use_id": "call_orphan",
+                    "content": "Orphaned"
+                }]
+            ),
+            # Valid assistant with tool_calls
+            UnifiedMessage(
+                role="assistant",
+                content="",
+                tool_calls=[{
+                    "id": "call_valid",
+                    "type": "function",
+                    "function": {"name": "valid_tool", "arguments": "{}"}
+                }]
+            ),
+            # Valid tool_results
+            UnifiedMessage(
+                role="user",
+                content="",
+                tool_results=[{
+                    "type": "tool_result",
+                    "tool_use_id": "call_valid",
+                    "content": "Valid result"
+                }]
+            )
+        ]
+        
+        print("Action: Processing messages...")
+        result, stripped = ensure_assistant_before_tool_results(messages)
+        
+        print(f"Result: {result}")
+        print("Checking orphaned tool_results are stripped...")
+        assert result[0].tool_results is None
+        
+        print("Checking valid tool_results are preserved...")
+        assert result[2].tool_results is not None
+        assert result[2].tool_results[0]["tool_use_id"] == "call_valid"
+        assert stripped is True  # Because orphaned ones were stripped
+    
+    def test_single_message_with_tool_results(self):
+        """
+        What it does: Verifies handling of single message with tool_results.
+        Purpose: Ensure single orphaned message is handled correctly.
+        """
+        print("Setup: Single message with tool_results...")
+        messages = [
+            UnifiedMessage(
+                role="user",
+                content="",
+                tool_results=[{
+                    "type": "tool_result",
+                    "tool_use_id": "call_123",
+                    "content": "Result"
+                }]
+            )
+        ]
+        
+        print("Action: Processing messages...")
+        result, stripped = ensure_assistant_before_tool_results(messages)
+        
+        print(f"Result: {result}")
+        print("Checking that tool_results are stripped...")
+        assert len(result) == 1
+        assert result[0].tool_results is None
+        assert stripped is True
+
+
+# ==================================================================================================
 # Tests for sanitize_json_schema
 # ==================================================================================================
 
@@ -549,8 +898,8 @@ class TestSanitizeJsonSchema:
     
     def test_sanitizes_items_in_lists(self):
         """
-        What it does: Verifies sanitization of items in lists (anyOf, oneOf).
-        Purpose: Ensure list elements are also sanitized.
+        What it does: Verifies sanitization of anyOf by simplifying to first non-null option.
+        Purpose: Ensure anyOf is simplified and sanitized (Kiro API doesn't support complex union types).
         """
         print("Setup: Schema with anyOf...")
         schema = {
@@ -564,9 +913,11 @@ class TestSanitizeJsonSchema:
         result = sanitize_json_schema(schema)
         
         print(f"Result: {result}")
-        print("Checking anyOf elements...")
-        assert "additionalProperties" not in result["anyOf"][0]
-        assert "required" not in result["anyOf"][1]
+        print("Checking anyOf is simplified to first option...")
+        # anyOf is simplified to first non-null option
+        assert "anyOf" not in result
+        assert result.get("type") == "string"
+        assert "additionalProperties" not in result
     
     def test_preserves_non_dict_list_items(self):
         """
@@ -684,6 +1035,243 @@ class TestExtractToolResults:
         assert len(result) == 2
         assert result[0]["toolUseId"] == "call_1"
         assert result[1]["toolUseId"] == "call_2"
+
+
+# ==================================================================================================
+# Tests for convert_tool_results_to_kiro_format
+# ==================================================================================================
+
+class TestConvertToolResultsToKiroFormat:
+    """
+    Tests for convert_tool_results_to_kiro_format function.
+    
+    This function converts unified tool results format (snake_case) to Kiro API format (camelCase).
+    
+    Unified format: {"type": "tool_result", "tool_use_id": "...", "content": "..."}
+    Kiro format: {"content": [{"text": "..."}], "status": "success", "toolUseId": "..."}
+    
+    This is a critical function for fixing the 400 "Improperly formed request" bug
+    where tool_results were sent in unified format instead of Kiro format.
+    """
+    
+    def test_converts_single_tool_result(self):
+        """
+        What it does: Verifies conversion of a single tool result.
+        Purpose: Ensure basic conversion from unified to Kiro format works.
+        """
+        print("Setup: Single tool result in unified format...")
+        tool_results = [
+            {"type": "tool_result", "tool_use_id": "call_123", "content": "Result text"}
+        ]
+        
+        print("Action: Converting to Kiro format...")
+        result = convert_tool_results_to_kiro_format(tool_results)
+        
+        print(f"Result: {result}")
+        print("Checking structure...")
+        assert len(result) == 1
+        
+        print("Checking toolUseId (camelCase)...")
+        assert result[0]["toolUseId"] == "call_123"
+        
+        print("Checking status...")
+        assert result[0]["status"] == "success"
+        
+        print("Checking content structure...")
+        assert "content" in result[0]
+        assert isinstance(result[0]["content"], list)
+        assert len(result[0]["content"]) == 1
+        assert result[0]["content"][0]["text"] == "Result text"
+    
+    def test_converts_multiple_tool_results(self):
+        """
+        What it does: Verifies conversion of multiple tool results.
+        Purpose: Ensure all tool results are converted correctly.
+        """
+        print("Setup: Multiple tool results...")
+        tool_results = [
+            {"type": "tool_result", "tool_use_id": "call_1", "content": "Result 1"},
+            {"type": "tool_result", "tool_use_id": "call_2", "content": "Result 2"},
+            {"type": "tool_result", "tool_use_id": "call_3", "content": "Result 3"}
+        ]
+        
+        print("Action: Converting to Kiro format...")
+        result = convert_tool_results_to_kiro_format(tool_results)
+        
+        print(f"Result: {result}")
+        print(f"Comparing count: Expected 3, Got {len(result)}")
+        assert len(result) == 3
+        
+        print("Checking all toolUseIds...")
+        assert result[0]["toolUseId"] == "call_1"
+        assert result[1]["toolUseId"] == "call_2"
+        assert result[2]["toolUseId"] == "call_3"
+        
+        print("Checking all contents...")
+        assert result[0]["content"][0]["text"] == "Result 1"
+        assert result[1]["content"][0]["text"] == "Result 2"
+        assert result[2]["content"][0]["text"] == "Result 3"
+    
+    def test_returns_empty_list_for_empty_input(self):
+        """
+        What it does: Verifies empty list handling.
+        Purpose: Ensure empty input returns empty output.
+        """
+        print("Setup: Empty list...")
+        
+        print("Action: Converting to Kiro format...")
+        result = convert_tool_results_to_kiro_format([])
+        
+        print(f"Comparing result: Expected [], Got {result}")
+        assert result == []
+    
+    def test_replaces_empty_content_with_placeholder(self):
+        """
+        What it does: Verifies empty content is replaced with placeholder.
+        Purpose: Ensure Kiro API receives non-empty content (required by API).
+        """
+        print("Setup: Tool result with empty content...")
+        tool_results = [
+            {"type": "tool_result", "tool_use_id": "call_123", "content": ""}
+        ]
+        
+        print("Action: Converting to Kiro format...")
+        result = convert_tool_results_to_kiro_format(tool_results)
+        
+        print(f"Result: {result}")
+        print("Checking that empty content is replaced with placeholder...")
+        assert result[0]["content"][0]["text"] == "(empty result)"
+    
+    def test_replaces_none_content_with_placeholder(self):
+        """
+        What it does: Verifies None content is replaced with placeholder.
+        Purpose: Ensure Kiro API receives non-empty content when content is None.
+        """
+        print("Setup: Tool result with None content...")
+        tool_results = [
+            {"type": "tool_result", "tool_use_id": "call_123", "content": None}
+        ]
+        
+        print("Action: Converting to Kiro format...")
+        result = convert_tool_results_to_kiro_format(tool_results)
+        
+        print(f"Result: {result}")
+        print("Checking that None content is replaced with placeholder...")
+        assert result[0]["content"][0]["text"] == "(empty result)"
+    
+    def test_handles_missing_content_key(self):
+        """
+        What it does: Verifies handling of missing content key.
+        Purpose: Ensure function doesn't crash when content key is missing.
+        """
+        print("Setup: Tool result without content key...")
+        tool_results = [
+            {"type": "tool_result", "tool_use_id": "call_123"}
+        ]
+        
+        print("Action: Converting to Kiro format...")
+        result = convert_tool_results_to_kiro_format(tool_results)
+        
+        print(f"Result: {result}")
+        print("Checking that missing content is replaced with placeholder...")
+        assert result[0]["content"][0]["text"] == "(empty result)"
+    
+    def test_handles_missing_tool_use_id(self):
+        """
+        What it does: Verifies handling of missing tool_use_id.
+        Purpose: Ensure function returns empty string for missing tool_use_id.
+        """
+        print("Setup: Tool result without tool_use_id...")
+        tool_results = [
+            {"type": "tool_result", "content": "Result text"}
+        ]
+        
+        print("Action: Converting to Kiro format...")
+        result = convert_tool_results_to_kiro_format(tool_results)
+        
+        print(f"Result: {result}")
+        print("Checking that missing tool_use_id becomes empty string...")
+        assert result[0]["toolUseId"] == ""
+        assert result[0]["content"][0]["text"] == "Result text"
+    
+    def test_extracts_text_from_list_content(self):
+        """
+        What it does: Verifies extraction of text from list content.
+        Purpose: Ensure multimodal content format is handled correctly.
+        """
+        print("Setup: Tool result with list content...")
+        tool_results = [
+            {
+                "type": "tool_result",
+                "tool_use_id": "call_123",
+                "content": [
+                    {"type": "text", "text": "Part 1"},
+                    {"type": "text", "text": " Part 2"}
+                ]
+            }
+        ]
+        
+        print("Action: Converting to Kiro format...")
+        result = convert_tool_results_to_kiro_format(tool_results)
+        
+        print(f"Result: {result}")
+        print("Checking that list content is extracted correctly...")
+        assert result[0]["content"][0]["text"] == "Part 1 Part 2"
+    
+    def test_preserves_long_content(self):
+        """
+        What it does: Verifies long content is preserved.
+        Purpose: Ensure large tool results are not truncated.
+        """
+        print("Setup: Tool result with long content...")
+        long_content = "A" * 10000
+        tool_results = [
+            {"type": "tool_result", "tool_use_id": "call_123", "content": long_content}
+        ]
+        
+        print("Action: Converting to Kiro format...")
+        result = convert_tool_results_to_kiro_format(tool_results)
+        
+        print(f"Result content length: {len(result[0]['content'][0]['text'])}")
+        print("Checking that long content is preserved...")
+        assert result[0]["content"][0]["text"] == long_content
+        assert len(result[0]["content"][0]["text"]) == 10000
+    
+    def test_all_results_have_success_status(self):
+        """
+        What it does: Verifies all results have status="success".
+        Purpose: Ensure Kiro API receives correct status field.
+        """
+        print("Setup: Multiple tool results...")
+        tool_results = [
+            {"type": "tool_result", "tool_use_id": "call_1", "content": "Result 1"},
+            {"type": "tool_result", "tool_use_id": "call_2", "content": "Result 2"}
+        ]
+        
+        print("Action: Converting to Kiro format...")
+        result = convert_tool_results_to_kiro_format(tool_results)
+        
+        print("Checking all statuses...")
+        for i, r in enumerate(result):
+            print(f"Result {i}: status = {r['status']}")
+            assert r["status"] == "success"
+    
+    def test_handles_unicode_content(self):
+        """
+        What it does: Verifies Unicode content is preserved.
+        Purpose: Ensure non-ASCII characters are handled correctly.
+        """
+        print("Setup: Tool result with Unicode content...")
+        tool_results = [
+            {"type": "tool_result", "tool_use_id": "call_123", "content": "Привет мир! 你好世界! 🎉"}
+        ]
+        
+        print("Action: Converting to Kiro format...")
+        result = convert_tool_results_to_kiro_format(tool_results)
+        
+        print(f"Result: {result}")
+        print("Checking that Unicode content is preserved...")
+        assert result[0]["content"][0]["text"] == "Привет мир! 你好世界! 🎉"
 
 
 # ==================================================================================================
@@ -1483,3 +2071,368 @@ class TestBuildKiroHistory:
         assert "assistantResponseMessage" in result[0]
         assistant_msg = result[0]["assistantResponseMessage"]
         assert "toolUses" in assistant_msg
+
+
+# ==================================================================================================
+# Tests for strip_all_tool_content
+# ==================================================================================================
+
+class TestStripAllToolContent:
+    """
+    Tests for strip_all_tool_content function.
+    
+    This function strips ALL tool-related content (tool_calls and tool_results)
+    from messages. It is used when no tools are defined in the request, because
+    Kiro API rejects requests that have toolResults but no tools defined.
+    
+    This is a critical function for handling clients like Cline/Roo that may
+    send tool-related content even when tools are not available.
+    """
+    
+    def test_returns_empty_list_for_empty_input(self):
+        """
+        What it does: Verifies empty list handling.
+        Purpose: Ensure empty input returns empty output.
+        """
+        print("Setup: Empty list...")
+        
+        print("Action: Stripping tool content...")
+        result, had_content = strip_all_tool_content([])
+        
+        print(f"Comparing result: Expected [], Got {result}")
+        assert result == []
+        assert had_content is False
+    
+    def test_preserves_messages_without_tool_content(self):
+        """
+        What it does: Verifies messages without tool content are unchanged.
+        Purpose: Ensure regular messages pass through unmodified.
+        """
+        print("Setup: Messages without tool content...")
+        messages = [
+            UnifiedMessage(role="user", content="Hello"),
+            UnifiedMessage(role="assistant", content="Hi there"),
+            UnifiedMessage(role="user", content="How are you?")
+        ]
+        
+        print("Action: Stripping tool content...")
+        result, had_content = strip_all_tool_content(messages)
+        
+        print(f"Comparing length: Expected 3, Got {len(result)}")
+        assert len(result) == 3
+        assert result[0].content == "Hello"
+        assert result[1].content == "Hi there"
+        assert result[2].content == "How are you?"
+        assert had_content is False
+    
+    def test_strips_tool_calls_from_assistant(self):
+        """
+        What it does: Verifies tool_calls are stripped from assistant messages.
+        Purpose: Ensure tool_calls are removed when no tools are defined.
+        """
+        print("Setup: Assistant message with tool_calls...")
+        messages = [
+            UnifiedMessage(
+                role="assistant",
+                content="I'll call a tool",
+                tool_calls=[{
+                    "id": "call_123",
+                    "type": "function",
+                    "function": {"name": "get_weather", "arguments": '{"location": "Moscow"}'}
+                }]
+            )
+        ]
+        
+        print("Action: Stripping tool content...")
+        result, had_content = strip_all_tool_content(messages)
+        
+        print(f"Result: {result}")
+        print("Checking that tool_calls are stripped...")
+        assert len(result) == 1
+        assert result[0].tool_calls is None
+        assert result[0].content == "I'll call a tool"  # Content preserved
+        assert had_content is True
+    
+    def test_strips_tool_results_from_user(self):
+        """
+        What it does: Verifies tool_results are stripped from user messages.
+        Purpose: Ensure tool_results are removed when no tools are defined.
+        """
+        print("Setup: User message with tool_results...")
+        messages = [
+            UnifiedMessage(
+                role="user",
+                content="Here are the results",
+                tool_results=[{
+                    "type": "tool_result",
+                    "tool_use_id": "call_123",
+                    "content": "Weather is sunny"
+                }]
+            )
+        ]
+        
+        print("Action: Stripping tool content...")
+        result, had_content = strip_all_tool_content(messages)
+        
+        print(f"Result: {result}")
+        print("Checking that tool_results are stripped...")
+        assert len(result) == 1
+        assert result[0].tool_results is None
+        assert result[0].content == "Here are the results"  # Content preserved
+        assert had_content is True
+    
+    def test_strips_both_tool_calls_and_tool_results(self):
+        """
+        What it does: Verifies both tool_calls and tool_results are stripped.
+        Purpose: Ensure all tool content is removed in a conversation.
+        """
+        print("Setup: Conversation with tool_calls and tool_results...")
+        messages = [
+            UnifiedMessage(role="user", content="Call a tool"),
+            UnifiedMessage(
+                role="assistant",
+                content="",
+                tool_calls=[{
+                    "id": "call_123",
+                    "type": "function",
+                    "function": {"name": "get_weather", "arguments": "{}"}
+                }]
+            ),
+            UnifiedMessage(
+                role="user",
+                content="",
+                tool_results=[{
+                    "type": "tool_result",
+                    "tool_use_id": "call_123",
+                    "content": "Result"
+                }]
+            )
+        ]
+        
+        print("Action: Stripping tool content...")
+        result, had_content = strip_all_tool_content(messages)
+        
+        print(f"Result: {result}")
+        print("Checking that all tool content is stripped...")
+        assert len(result) == 3
+        assert result[0].tool_calls is None
+        assert result[0].tool_results is None
+        assert result[1].tool_calls is None
+        assert result[1].tool_results is None
+        assert result[2].tool_calls is None
+        assert result[2].tool_results is None
+        assert had_content is True
+    
+    def test_strips_multiple_tool_calls(self):
+        """
+        What it does: Verifies multiple tool_calls are all stripped.
+        Purpose: Ensure all tool_calls in a message are removed.
+        """
+        print("Setup: Assistant message with multiple tool_calls...")
+        messages = [
+            UnifiedMessage(
+                role="assistant",
+                content="",
+                tool_calls=[
+                    {"id": "call_1", "type": "function", "function": {"name": "tool1", "arguments": "{}"}},
+                    {"id": "call_2", "type": "function", "function": {"name": "tool2", "arguments": "{}"}},
+                    {"id": "call_3", "type": "function", "function": {"name": "tool3", "arguments": "{}"}}
+                ]
+            )
+        ]
+        
+        print("Action: Stripping tool content...")
+        result, had_content = strip_all_tool_content(messages)
+        
+        print(f"Result: {result}")
+        print("Checking that all tool_calls are stripped...")
+        assert result[0].tool_calls is None
+        assert had_content is True
+    
+    def test_strips_multiple_tool_results(self):
+        """
+        What it does: Verifies multiple tool_results are all stripped.
+        Purpose: Ensure all tool_results in a message are removed.
+        """
+        print("Setup: User message with multiple tool_results...")
+        messages = [
+            UnifiedMessage(
+                role="user",
+                content="",
+                tool_results=[
+                    {"type": "tool_result", "tool_use_id": "call_1", "content": "Result 1"},
+                    {"type": "tool_result", "tool_use_id": "call_2", "content": "Result 2"},
+                    {"type": "tool_result", "tool_use_id": "call_3", "content": "Result 3"}
+                ]
+            )
+        ]
+        
+        print("Action: Stripping tool content...")
+        result, had_content = strip_all_tool_content(messages)
+        
+        print(f"Result: {result}")
+        print("Checking that all tool_results are stripped...")
+        assert result[0].tool_results is None
+        assert had_content is True
+    
+    def test_preserves_message_content_when_stripping(self):
+        """
+        What it does: Verifies message content is preserved when tool content is stripped.
+        Purpose: Ensure only tool content is removed, not the entire message.
+        """
+        print("Setup: Messages with both content and tool content...")
+        messages = [
+            UnifiedMessage(
+                role="assistant",
+                content="Let me help you with that",
+                tool_calls=[{
+                    "id": "call_123",
+                    "type": "function",
+                    "function": {"name": "helper", "arguments": "{}"}
+                }]
+            ),
+            UnifiedMessage(
+                role="user",
+                content="Thanks for the result",
+                tool_results=[{
+                    "type": "tool_result",
+                    "tool_use_id": "call_123",
+                    "content": "Done"
+                }]
+            )
+        ]
+        
+        print("Action: Stripping tool content...")
+        result, had_content = strip_all_tool_content(messages)
+        
+        print(f"Result: {result}")
+        print("Checking that content is preserved...")
+        assert result[0].content == "Let me help you with that"
+        assert result[1].content == "Thanks for the result"
+        assert had_content is True
+    
+    def test_preserves_message_role_when_stripping(self):
+        """
+        What it does: Verifies message role is preserved when tool content is stripped.
+        Purpose: Ensure role is not modified during stripping.
+        """
+        print("Setup: Messages with tool content...")
+        messages = [
+            UnifiedMessage(role="assistant", content="", tool_calls=[
+                {"id": "call_1", "type": "function", "function": {"name": "tool", "arguments": "{}"}}
+            ]),
+            UnifiedMessage(role="user", content="", tool_results=[
+                {"type": "tool_result", "tool_use_id": "call_1", "content": "Result"}
+            ])
+        ]
+        
+        print("Action: Stripping tool content...")
+        result, had_content = strip_all_tool_content(messages)
+        
+        print(f"Result: {result}")
+        print("Checking that roles are preserved...")
+        assert result[0].role == "assistant"
+        assert result[1].role == "user"
+        assert had_content is True
+    
+    def test_mixed_messages_with_and_without_tool_content(self):
+        """
+        What it does: Verifies correct handling of mixed messages.
+        Purpose: Ensure only messages with tool content are modified.
+        """
+        print("Setup: Mixed messages...")
+        messages = [
+            UnifiedMessage(role="user", content="Hello"),  # No tool content
+            UnifiedMessage(
+                role="assistant",
+                content="",
+                tool_calls=[{"id": "call_1", "type": "function", "function": {"name": "tool", "arguments": "{}"}}]
+            ),  # Has tool content
+            UnifiedMessage(role="user", content="Continue"),  # No tool content
+        ]
+        
+        print("Action: Stripping tool content...")
+        result, had_content = strip_all_tool_content(messages)
+        
+        print(f"Result: {result}")
+        print("Checking mixed handling...")
+        assert result[0].content == "Hello"
+        assert result[0].tool_calls is None
+        assert result[1].tool_calls is None  # Stripped
+        assert result[2].content == "Continue"
+        assert result[2].tool_calls is None
+        assert had_content is True
+    
+    def test_returns_false_when_no_tool_content_stripped(self):
+        """
+        What it does: Verifies had_content flag is False when no tool content exists.
+        Purpose: Ensure correct flag value for messages without tool content.
+        """
+        print("Setup: Messages without any tool content...")
+        messages = [
+            UnifiedMessage(role="user", content="Hello"),
+            UnifiedMessage(role="assistant", content="Hi"),
+            UnifiedMessage(role="user", content="Bye")
+        ]
+        
+        print("Action: Stripping tool content...")
+        result, had_content = strip_all_tool_content(messages)
+        
+        print(f"had_content: {had_content}")
+        assert had_content is False
+    
+    def test_returns_true_when_tool_content_stripped(self):
+        """
+        What it does: Verifies had_content flag is True when tool content is stripped.
+        Purpose: Ensure correct flag value for messages with tool content.
+        """
+        print("Setup: Message with tool content...")
+        messages = [
+            UnifiedMessage(
+                role="assistant",
+                content="",
+                tool_calls=[{"id": "call_1", "type": "function", "function": {"name": "tool", "arguments": "{}"}}]
+            )
+        ]
+        
+        print("Action: Stripping tool content...")
+        result, had_content = strip_all_tool_content(messages)
+        
+        print(f"had_content: {had_content}")
+        assert had_content is True
+    
+    def test_handles_empty_tool_calls_list(self):
+        """
+        What it does: Verifies handling of empty tool_calls list.
+        Purpose: Ensure empty list is treated as no tool content.
+        """
+        print("Setup: Message with empty tool_calls list...")
+        messages = [
+            UnifiedMessage(role="assistant", content="Hello", tool_calls=[])
+        ]
+        
+        print("Action: Stripping tool content...")
+        result, had_content = strip_all_tool_content(messages)
+        
+        print(f"Result: {result}")
+        print(f"had_content: {had_content}")
+        # Empty list is falsy, so should not be considered as having tool content
+        assert had_content is False
+    
+    def test_handles_empty_tool_results_list(self):
+        """
+        What it does: Verifies handling of empty tool_results list.
+        Purpose: Ensure empty list is treated as no tool content.
+        """
+        print("Setup: Message with empty tool_results list...")
+        messages = [
+            UnifiedMessage(role="user", content="Hello", tool_results=[])
+        ]
+        
+        print("Action: Stripping tool content...")
+        result, had_content = strip_all_tool_content(messages)
+        
+        print(f"Result: {result}")
+        print(f"had_content: {had_content}")
+        # Empty list is falsy, so should not be considered as having tool content
+        assert had_content is False

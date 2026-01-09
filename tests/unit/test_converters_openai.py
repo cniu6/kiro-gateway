@@ -463,10 +463,10 @@ class TestBuildKiroPayload:
         assert len(context["tools"]) == 1
         assert context["tools"][0]["toolSpecification"]["name"] == "get_weather"
     
-    def test_skips_thinking_tags_when_tool_results_present(self):
+    def test_injects_thinking_tags_even_when_tool_results_present(self):
         """
-        What it does: Verifies thinking tags are NOT injected when toolResults are present.
-        Purpose: Fix GitHub issue #20 - OpenCode compaction returns 400 error.
+        What it does: Verifies thinking tags ARE injected even when toolResults are present.
+        Purpose: Extended thinking should work in all scenarios including tool use flows.
         """
         print("Setup: Request where last message is a tool result...")
         request = ChatCompletionRequest(
@@ -483,6 +483,17 @@ class TestBuildKiroPayload:
                     }]
                 ),
                 ChatMessage(role="tool", content="Command output here", tool_call_id="tool_1"),
+            ],
+            # Tools must be defined for tool_results to be preserved
+            tools=[
+                Tool(
+                    type="function",
+                    function=ToolFunction(
+                        name="bash",
+                        description="Run a bash command",
+                        parameters={"type": "object", "properties": {}}
+                    )
+                )
             ]
         )
         
@@ -499,8 +510,8 @@ class TestBuildKiroPayload:
         print(f"Has toolResults: {'toolResults' in context}")
         
         assert "toolResults" in context, "toolResults should be present"
-        assert "<thinking_mode>" not in content, "thinking tags should NOT be injected when toolResults present"
-        assert content == "Continue", "Content should be 'Continue' (no thinking tags)"
+        assert "<thinking_mode>enabled</thinking_mode>" in content, "thinking tags SHOULD be injected even with toolResults"
+        assert "<max_thinking_length>4000</max_thinking_length>" in content, "max_thinking_length should be present"
     
     def test_injects_thinking_tags_when_no_tool_results(self):
         """
@@ -846,7 +857,7 @@ class TestBuildKiroPayloadToolCallsIntegration:
         """
         What it does: Verifies full scenario with multiple assistant tool_calls and their results.
         Purpose: Ensure all toolUses and toolResults are correctly linked in Kiro payload.
-        
+
         This is an integration test for a Codex CLI bug where multiple assistant
         messages with tool_calls were sent in a row, followed by tool results.
         """
@@ -878,6 +889,17 @@ class TestBuildKiroPayloadToolCallsIntegration:
                 # Results of both tool_calls
                 ChatMessage(role="tool", content="file1.txt\nfile2.txt", tool_call_id="tooluse_first"),
                 ChatMessage(role="tool", content="/home/user", tool_call_id="tooluse_second")
+            ],
+            # Tools must be defined for tool_results to be preserved
+            tools=[
+                Tool(
+                    type="function",
+                    function=ToolFunction(
+                        name="shell",
+                        description="Run a shell command",
+                        parameters={"type": "object", "properties": {"command": {"type": "array"}}}
+                    )
+                )
             ]
         )
         
@@ -918,8 +940,8 @@ class TestBuildKiroPayloadToolCallsIntegration:
         print(f"Comparing toolResults count: Expected 2, Got {len(tool_results)}")
         assert len(tool_results) == 2, f"Should have 2 toolResults, got {len(tool_results)}"
         
-        # Note: tool_results use snake_case (tool_use_id) in unified format
-        tool_result_ids = [tr["tool_use_id"] for tr in tool_results]
+        # Note: tool_results in Kiro payload use camelCase (toolUseId)
+        tool_result_ids = [tr["toolUseId"] for tr in tool_results]
         print(f"ToolResult IDs: {tool_result_ids}")
         assert "tooluse_first" in tool_result_ids
         assert "tooluse_second" in tool_result_ids

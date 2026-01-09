@@ -25,6 +25,7 @@ from kiro.streaming_core import (
     parse_kiro_stream,
     collect_stream_to_result,
     calculate_tokens_from_context_usage,
+    stream_with_first_token_retry,
     _process_chunk,
 )
 
@@ -1235,3 +1236,449 @@ class TestStreamingCoreErrorHandling:
         print(f"Caught exception: {exc_info.value}")
         assert "Test error" in str(exc_info.value)
         print("✓ RuntimeError propagated correctly")
+
+
+# ==================================================================================================
+# Tests for stream_with_first_token_retry()
+# ==================================================================================================
+
+class TestStreamWithFirstTokenRetryCore:
+    """
+    Tests for stream_with_first_token_retry() generic function.
+    
+    This function provides automatic retry logic on first token timeout.
+    It is used by both OpenAI and Anthropic streaming implementations.
+    """
+    
+    @pytest.mark.asyncio
+    async def test_yields_chunks_on_success(self):
+        """
+        What it does: Yields chunks on successful streaming.
+        Goal: Verify normal operation without retries.
+        """
+        print("Setup: Mock successful request...")
+        
+        mock_response = AsyncMock()
+        mock_response.status_code = 200
+        mock_response.aclose = AsyncMock()
+        
+        async def mock_make_request():
+            return mock_response
+        
+        async def mock_stream_processor(response):
+            yield "chunk1"
+            yield "chunk2"
+            yield "chunk3"
+        
+        print("Action: Streaming with retry wrapper...")
+        chunks = []
+        
+        async for chunk in stream_with_first_token_retry(
+            make_request=mock_make_request,
+            stream_processor=mock_stream_processor,
+            max_retries=3,
+            first_token_timeout=30
+        ):
+            chunks.append(chunk)
+        
+        print(f"Received {len(chunks)} chunks")
+        assert len(chunks) == 3
+        assert chunks == ["chunk1", "chunk2", "chunk3"]
+        print("✓ Chunks yielded on success")
+    
+    @pytest.mark.asyncio
+    async def test_retries_on_first_token_timeout(self):
+        """
+        What it does: Retries on first token timeout.
+        Goal: Verify retry logic is triggered.
+        """
+        print("Setup: Mock request that times out then succeeds...")
+        
+        call_count = 0
+        
+        async def mock_make_request():
+            nonlocal call_count
+            call_count += 1
+            response = AsyncMock()
+            response.status_code = 200
+            response.aclose = AsyncMock()
+            return response
+        
+        async def mock_stream_processor(response):
+            nonlocal call_count
+            if call_count == 1:
+                raise FirstTokenTimeoutError("Timeout on first attempt")
+            yield "success_chunk"
+        
+        print("Action: Streaming with retry on timeout...")
+        chunks = []
+        
+        async for chunk in stream_with_first_token_retry(
+            make_request=mock_make_request,
+            stream_processor=mock_stream_processor,
+            max_retries=3,
+            first_token_timeout=30
+        ):
+            chunks.append(chunk)
+        
+        print(f"Call count: {call_count}")
+        print(f"Received {len(chunks)} chunks")
+        
+        assert call_count == 2  # First timeout, second success
+        assert len(chunks) == 1
+        assert chunks[0] == "success_chunk"
+        print("✓ Retry on timeout works correctly")
+    
+    @pytest.mark.asyncio
+    async def test_raises_exception_after_all_retries(self):
+        """
+        What it does: Raises exception after all retries exhausted.
+        Goal: Verify error handling when all retries fail.
+        """
+        print("Setup: Mock request that always times out...")
+        
+        call_count = 0
+        
+        async def mock_make_request():
+            nonlocal call_count
+            call_count += 1
+            response = AsyncMock()
+            response.status_code = 200
+            response.aclose = AsyncMock()
+            return response
+        
+        async def mock_stream_processor(response):
+            raise FirstTokenTimeoutError("Timeout!")
+            yield  # Make it a generator
+        
+        print("Action: Streaming with all retries failing...")
+        
+        with pytest.raises(Exception) as exc_info:
+            async for chunk in stream_with_first_token_retry(
+                make_request=mock_make_request,
+                stream_processor=mock_stream_processor,
+                max_retries=3,
+                first_token_timeout=30
+            ):
+                pass
+        
+        print(f"Call count: {call_count}")
+        print(f"Exception: {exc_info.value}")
+        
+        assert call_count == 3  # Should try exactly 3 times
+        assert "30" in str(exc_info.value)  # Timeout value in message
+        assert "3" in str(exc_info.value)  # Retry count in message
+        print("✓ Exception raised after all retries")
+    
+    @pytest.mark.asyncio
+    async def test_uses_custom_error_callbacks(self):
+        """
+        What it does: Uses custom error callbacks.
+        Goal: Verify on_http_error and on_all_retries_failed callbacks.
+        """
+        print("Setup: Mock request that always times out with custom callbacks...")
+        
+        async def mock_make_request():
+            response = AsyncMock()
+            response.status_code = 200
+            response.aclose = AsyncMock()
+            return response
+        
+        async def mock_stream_processor(response):
+            raise FirstTokenTimeoutError("Timeout!")
+            yield  # Make it a generator
+        
+        def custom_all_retries_failed(max_retries, timeout):
+            return ValueError(f"Custom error: {max_retries} retries, {timeout}s timeout")
+        
+        print("Action: Streaming with custom callback...")
+        
+        with pytest.raises(ValueError) as exc_info:
+            async for chunk in stream_with_first_token_retry(
+                make_request=mock_make_request,
+                stream_processor=mock_stream_processor,
+                max_retries=2,
+                first_token_timeout=15,
+                on_all_retries_failed=custom_all_retries_failed
+            ):
+                pass
+        
+        print(f"Exception: {exc_info.value}")
+        assert "Custom error" in str(exc_info.value)
+        assert "2 retries" in str(exc_info.value)
+        assert "15" in str(exc_info.value)
+        print("✓ Custom callback used correctly")
+    
+    @pytest.mark.asyncio
+    async def test_handles_http_error(self):
+        """
+        What it does: Handles HTTP error from API.
+        Goal: Verify HTTP errors are handled correctly.
+        """
+        print("Setup: Mock request that returns HTTP error...")
+        
+        async def mock_make_request():
+            response = AsyncMock()
+            response.status_code = 500
+            response.aread = AsyncMock(return_value=b"Internal Server Error")
+            response.aclose = AsyncMock()
+            return response
+        
+        async def mock_stream_processor(response):
+            yield "should not reach"
+        
+        print("Action: Streaming with HTTP error...")
+        
+        with pytest.raises(Exception) as exc_info:
+            async for chunk in stream_with_first_token_retry(
+                make_request=mock_make_request,
+                stream_processor=mock_stream_processor,
+                max_retries=3,
+                first_token_timeout=30
+            ):
+                pass
+        
+        print(f"Exception: {exc_info.value}")
+        assert "500" in str(exc_info.value)
+        assert "Internal Server Error" in str(exc_info.value)
+        print("✓ HTTP error handled correctly")
+    
+    @pytest.mark.asyncio
+    async def test_uses_custom_http_error_callback(self):
+        """
+        What it does: Uses custom HTTP error callback.
+        Goal: Verify on_http_error callback is used.
+        """
+        print("Setup: Mock request with custom HTTP error callback...")
+        
+        async def mock_make_request():
+            response = AsyncMock()
+            response.status_code = 429
+            response.aread = AsyncMock(return_value=b"Rate limited")
+            response.aclose = AsyncMock()
+            return response
+        
+        async def mock_stream_processor(response):
+            yield "should not reach"
+        
+        def custom_http_error(status_code, error_text):
+            return RuntimeError(f"Custom HTTP error: {status_code} - {error_text}")
+        
+        print("Action: Streaming with custom HTTP error callback...")
+        
+        with pytest.raises(RuntimeError) as exc_info:
+            async for chunk in stream_with_first_token_retry(
+                make_request=mock_make_request,
+                stream_processor=mock_stream_processor,
+                max_retries=3,
+                first_token_timeout=30,
+                on_http_error=custom_http_error
+            ):
+                pass
+        
+        print(f"Exception: {exc_info.value}")
+        assert "Custom HTTP error" in str(exc_info.value)
+        assert "429" in str(exc_info.value)
+        assert "Rate limited" in str(exc_info.value)
+        print("✓ Custom HTTP error callback used correctly")
+    
+    @pytest.mark.asyncio
+    async def test_closes_response_on_timeout(self):
+        """
+        What it does: Closes response on timeout.
+        Goal: Verify response is properly closed after timeout.
+        """
+        print("Setup: Mock request that times out...")
+        
+        responses = []
+        
+        async def mock_make_request():
+            response = AsyncMock()
+            response.status_code = 200
+            response.aclose = AsyncMock()
+            responses.append(response)
+            return response
+        
+        async def mock_stream_processor(response):
+            raise FirstTokenTimeoutError("Timeout!")
+            yield  # Make it a generator
+        
+        print("Action: Streaming with timeout...")
+        
+        try:
+            async for chunk in stream_with_first_token_retry(
+                make_request=mock_make_request,
+                stream_processor=mock_stream_processor,
+                max_retries=2,
+                first_token_timeout=30
+            ):
+                pass
+        except Exception:
+            pass
+        
+        print(f"Created {len(responses)} responses")
+        
+        # All responses should have been closed
+        for i, response in enumerate(responses):
+            print(f"Response {i} aclose called: {response.aclose.called}")
+            response.aclose.assert_called()
+        
+        print("✓ Responses closed on timeout")
+    
+    @pytest.mark.asyncio
+    async def test_propagates_non_timeout_exceptions(self):
+        """
+        What it does: Propagates non-timeout exceptions without retry.
+        Goal: Verify other exceptions are not retried.
+        """
+        print("Setup: Mock request that raises RuntimeError...")
+        
+        call_count = 0
+        
+        async def mock_make_request():
+            nonlocal call_count
+            call_count += 1
+            response = AsyncMock()
+            response.status_code = 200
+            response.aclose = AsyncMock()
+            return response
+        
+        async def mock_stream_processor(response):
+            raise RuntimeError("Not a timeout error")
+            yield  # Make it a generator
+        
+        print("Action: Streaming with non-timeout error...")
+        
+        with pytest.raises(RuntimeError) as exc_info:
+            async for chunk in stream_with_first_token_retry(
+                make_request=mock_make_request,
+                stream_processor=mock_stream_processor,
+                max_retries=3,
+                first_token_timeout=30
+            ):
+                pass
+        
+        print(f"Call count: {call_count}")
+        print(f"Exception: {exc_info.value}")
+        
+        assert call_count == 1  # Should NOT retry
+        assert "Not a timeout error" in str(exc_info.value)
+        print("✓ Non-timeout exceptions propagated without retry")
+    
+    @pytest.mark.asyncio
+    async def test_uses_configured_max_retries(self):
+        """
+        What it does: Uses configured max_retries value.
+        Goal: Verify max_retries parameter is respected.
+        """
+        print("Setup: Mock request that always times out...")
+        
+        call_count = 0
+        
+        async def mock_make_request():
+            nonlocal call_count
+            call_count += 1
+            response = AsyncMock()
+            response.status_code = 200
+            response.aclose = AsyncMock()
+            return response
+        
+        async def mock_stream_processor(response):
+            raise FirstTokenTimeoutError("Timeout!")
+            yield  # Make it a generator
+        
+        print("Action: Streaming with max_retries=5...")
+        
+        try:
+            async for chunk in stream_with_first_token_retry(
+                make_request=mock_make_request,
+                stream_processor=mock_stream_processor,
+                max_retries=5,
+                first_token_timeout=30
+            ):
+                pass
+        except Exception:
+            pass
+        
+        print(f"Call count: {call_count}")
+        assert call_count == 5  # Should try exactly 5 times
+        print("✓ max_retries parameter respected")
+    
+    @pytest.mark.asyncio
+    async def test_multiple_retries_then_success(self):
+        """
+        What it does: Succeeds after multiple retries.
+        Goal: Verify recovery after multiple failures.
+        """
+        print("Setup: Mock request that fails twice then succeeds...")
+        
+        call_count = 0
+        
+        async def mock_make_request():
+            nonlocal call_count
+            call_count += 1
+            response = AsyncMock()
+            response.status_code = 200
+            response.aclose = AsyncMock()
+            return response
+        
+        async def mock_stream_processor(response):
+            nonlocal call_count
+            if call_count < 3:
+                raise FirstTokenTimeoutError(f"Timeout on attempt {call_count}")
+            yield "finally_success"
+        
+        print("Action: Streaming with multiple retries...")
+        chunks = []
+        
+        async for chunk in stream_with_first_token_retry(
+            make_request=mock_make_request,
+            stream_processor=mock_stream_processor,
+            max_retries=5,
+            first_token_timeout=30
+        ):
+            chunks.append(chunk)
+        
+        print(f"Call count: {call_count}")
+        print(f"Received {len(chunks)} chunks")
+        
+        assert call_count == 3  # Failed twice, succeeded on third
+        assert len(chunks) == 1
+        assert chunks[0] == "finally_success"
+        print("✓ Multiple retries then success works correctly")
+    
+    @pytest.mark.asyncio
+    async def test_closes_response_on_http_error(self):
+        """
+        What it does: Closes response on HTTP error.
+        Goal: Verify response is properly closed after HTTP error.
+        """
+        print("Setup: Mock request that returns HTTP error...")
+        
+        response = AsyncMock()
+        response.status_code = 503
+        response.aread = AsyncMock(return_value=b"Service Unavailable")
+        response.aclose = AsyncMock()
+        
+        async def mock_make_request():
+            return response
+        
+        async def mock_stream_processor(resp):
+            yield "should not reach"
+        
+        print("Action: Streaming with HTTP error...")
+        
+        try:
+            async for chunk in stream_with_first_token_retry(
+                make_request=mock_make_request,
+                stream_processor=mock_stream_processor,
+                max_retries=3,
+                first_token_timeout=30
+            ):
+                pass
+        except Exception:
+            pass
+        
+        print(f"Response aclose called: {response.aclose.called}")
+        response.aclose.assert_called()
+        print("✓ Response closed on HTTP error")

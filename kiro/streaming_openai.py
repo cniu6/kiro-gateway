@@ -51,6 +51,7 @@ from kiro.streaming_core import (
     FirstTokenTimeoutError,
     KiroEvent,
     calculate_tokens_from_context_usage,
+    stream_with_first_token_retry as stream_with_first_token_retry_core,
 )
 
 if TYPE_CHECKING:
@@ -373,6 +374,8 @@ async def stream_with_first_token_retry(
     This is seamless for user - they just see a delay,
     but eventually get a response (or error after all attempts).
     
+    Uses generic stream_with_first_token_retry from streaming_core.py.
+    
     Args:
         make_request: Function to create new HTTP request
         client: HTTP client
@@ -396,88 +399,43 @@ async def stream_with_first_token_retry(
         >>> async for chunk in stream_with_first_token_retry(make_req, client, model, cache, auth):
         ...     print(chunk)
     """
-    last_error: Optional[Exception] = None
+    def create_http_error(status_code: int, error_text: str) -> HTTPException:
+        """Create HTTPException for HTTP errors."""
+        return HTTPException(
+            status_code=status_code,
+            detail=f"Upstream API error: {error_text}"
+        )
     
-    for attempt in range(max_retries):
-        response: Optional[httpx.Response] = None
-        try:
-            # Make request
-            if attempt > 0:
-                logger.warning(f"Retry attempt {attempt + 1}/{max_retries} after first token timeout")
-            
-            response = await make_request()
-            
-            if response.status_code != 200:
-                # Error from API - close response and raise exception
-                try:
-                    error_content = await response.aread()
-                    error_text = error_content.decode('utf-8', errors='replace')
-                except Exception:
-                    error_text = "Unknown error"
-                
-                try:
-                    await response.aclose()
-                except Exception:
-                    pass
-                
-                logger.error(f"Error from Kiro API: {response.status_code} - {error_text}")
-                raise HTTPException(
-                    status_code=response.status_code,
-                    detail=f"Upstream API error: {error_text}"
-                )
-            
-            # Try to stream with first token timeout
-            async for chunk in stream_kiro_to_openai_internal(
-                client,
-                response,
-                model,
-                model_cache,
-                auth_manager,
-                first_token_timeout=first_token_timeout,
-                request_messages=request_messages,
-                request_tools=request_tools
-            ):
-                yield chunk
-            
-            # Successfully completed - exit
-            return
-            
-        except FirstTokenTimeoutError as e:
-            last_error = e
-            logger.warning(
-                f"[FirstTokenTimeout] Attempt {attempt + 1}/{max_retries} failed - "
-                f"model did not respond within {first_token_timeout}s"
-            )
-            
-            # Close current response if open
-            if response:
-                try:
-                    await response.aclose()
-                except Exception:
-                    pass
-            
-            # Continue to next attempt
-            continue
-            
-        except Exception as e:
-            # Other errors - no retry, propagate
-            logger.error(f"Unexpected error during streaming: {e}", exc_info=True)
-            if response:
-                try:
-                    await response.aclose()
-                except Exception:
-                    pass
-            raise
+    def create_timeout_error(retries: int, timeout: float) -> HTTPException:
+        """Create HTTPException for timeout errors."""
+        return HTTPException(
+            status_code=504,
+            detail=f"Model did not respond within {timeout}s after {retries} attempts. Please try again."
+        )
     
-    # All attempts exhausted - raise HTTP error
-    logger.error(
-        f"[FirstTokenTimeout] All {max_retries} attempts exhausted - "
-        f"model never responded within {first_token_timeout}s per attempt"
-    )
-    raise HTTPException(
-        status_code=504,
-        detail=f"Model did not respond within {first_token_timeout}s after {max_retries} attempts. Please try again."
-    )
+    async def stream_processor(response: httpx.Response) -> AsyncGenerator[str, None]:
+        """Process response and yield OpenAI SSE chunks."""
+        async for chunk in stream_kiro_to_openai_internal(
+            client,
+            response,
+            model,
+            model_cache,
+            auth_manager,
+            first_token_timeout=first_token_timeout,
+            request_messages=request_messages,
+            request_tools=request_tools
+        ):
+            yield chunk
+    
+    async for chunk in stream_with_first_token_retry_core(
+        make_request=make_request,
+        stream_processor=stream_processor,
+        max_retries=max_retries,
+        first_token_timeout=first_token_timeout,
+        on_http_error=create_http_error,
+        on_all_retries_failed=create_timeout_error,
+    ):
+        yield chunk
 
 
 async def collect_stream_response(

@@ -140,7 +140,7 @@ class KiroHttpClient:
                 timeout_config = httpx.Timeout(timeout=300.0)
                 logger.debug("Creating non-streaming HTTP client (timeout=300s)")
             
-            self.client = httpx.AsyncClient(timeout=timeout_config, follow_redirects=True)
+            self.client = httpx.AsyncClient(timeout=timeout_config, follow_redirects=True, verify=False)
         return self.client
     
     async def close(self) -> None:

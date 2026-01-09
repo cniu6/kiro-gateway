@@ -77,6 +77,10 @@ def _extract_tool_calls_from_openai(msg: ChatMessage) -> List[Dict[str, Any]]:
     """
     Extracts tool calls from OpenAI assistant message.
     
+    Handles both:
+    - OpenAI format: tool_calls field
+    - Anthropic/Cursor format: tool_use blocks in content
+    
     Args:
         msg: OpenAI ChatMessage
     
@@ -85,6 +89,7 @@ def _extract_tool_calls_from_openai(msg: ChatMessage) -> List[Dict[str, Any]]:
     """
     tool_calls = []
     
+    # From tool_calls field (OpenAI format)
     if msg.tool_calls:
         for tc in msg.tool_calls:
             if isinstance(tc, dict):
@@ -94,6 +99,20 @@ def _extract_tool_calls_from_openai(msg: ChatMessage) -> List[Dict[str, Any]]:
                     "function": {
                         "name": tc.get("function", {}).get("name", ""),
                         "arguments": tc.get("function", {}).get("arguments", "{}")
+                    }
+                })
+    
+    # From content blocks (Anthropic/Cursor format)
+    if isinstance(msg.content, list):
+        for item in msg.content:
+            if isinstance(item, dict) and item.get("type") == "tool_use":
+                # Convert to unified format
+                tool_calls.append({
+                    "id": item.get("id", ""),
+                    "type": "function",
+                    "function": {
+                        "name": item.get("name", ""),
+                        "arguments": item.get("input", {})  # Keep as dict, will be handled later
                     }
                 })
     
@@ -130,6 +149,8 @@ def convert_openai_messages_to_unified(messages: List[ChatMessage]) -> Tuple[str
     # Process tool messages - convert to user messages with tool_results
     processed = []
     pending_tool_results = []
+    total_tool_calls = 0
+    total_tool_results = 0
     
     for msg in non_system_messages:
         if msg.role == "tool":
@@ -140,7 +161,7 @@ def convert_openai_messages_to_unified(messages: List[ChatMessage]) -> Tuple[str
                 "content": extract_text_content(msg.content) or "(empty result)"
             }
             pending_tool_results.append(tool_result)
-            logger.debug(f"Collected tool result for tool_call_id={msg.tool_call_id}")
+            total_tool_results += 1
         else:
             # If there are accumulated tool results, create user message with them
             if pending_tool_results:
@@ -151,7 +172,6 @@ def convert_openai_messages_to_unified(messages: List[ChatMessage]) -> Tuple[str
                 )
                 processed.append(unified_msg)
                 pending_tool_results.clear()
-                logger.debug(f"Created user message with {len(unified_msg.tool_results)} tool results")
             
             # Convert regular message
             tool_calls = None
@@ -159,8 +179,12 @@ def convert_openai_messages_to_unified(messages: List[ChatMessage]) -> Tuple[str
             
             if msg.role == "assistant":
                 tool_calls = _extract_tool_calls_from_openai(msg) or None
+                if tool_calls:
+                    total_tool_calls += len(tool_calls)
             elif msg.role == "user":
                 tool_results = _extract_tool_results_from_openai(msg.content) or None
+                if tool_results:
+                    total_tool_results += len(tool_results)
             
             unified_msg = UnifiedMessage(
                 role=msg.role,
@@ -178,7 +202,13 @@ def convert_openai_messages_to_unified(messages: List[ChatMessage]) -> Tuple[str
             tool_results=pending_tool_results.copy()
         )
         processed.append(unified_msg)
-        logger.debug(f"Created final user message with {len(pending_tool_results)} tool results")
+    
+    # Log summary if any tool content was found
+    if total_tool_calls > 0 or total_tool_results > 0:
+        logger.debug(
+            f"Converted {len(messages)} OpenAI messages: "
+            f"{total_tool_calls} tool_calls, {total_tool_results} tool_results"
+        )
     
     return system_prompt, processed
 
@@ -186,6 +216,8 @@ def convert_openai_messages_to_unified(messages: List[ChatMessage]) -> Tuple[str
 def convert_openai_tools_to_unified(tools: Optional[List[Tool]]) -> Optional[List[UnifiedTool]]:
     """
     Converts OpenAI tools to unified format.
+    
+    Supports both standard OpenAI format and Cursor's flat format.
     
     Args:
         tools: List of OpenAI Tool objects
@@ -198,14 +230,24 @@ def convert_openai_tools_to_unified(tools: Optional[List[Tool]]) -> Optional[Lis
     
     unified_tools = []
     for tool in tools:
-        if tool.type != "function":
-            continue
-        
-        unified_tools.append(UnifiedTool(
-            name=tool.function.name,
-            description=tool.function.description,
-            input_schema=tool.function.parameters
-        ))
+        # Check if this is Cursor flat format (has name directly on tool)
+        if tool.name:
+            # Cursor flat format
+            unified_tools.append(UnifiedTool(
+                name=tool.name,
+                description=tool.description,
+                input_schema=tool.input_schema
+            ))
+        elif tool.function:
+            # Standard OpenAI format
+            if tool.type and tool.type != "function":
+                continue
+            
+            unified_tools.append(UnifiedTool(
+                name=tool.function.name,
+                description=tool.function.description,
+                input_schema=tool.function.parameters
+            ))
     
     return unified_tools if unified_tools else None
 

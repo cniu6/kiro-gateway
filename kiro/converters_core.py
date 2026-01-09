@@ -224,6 +224,9 @@ def sanitize_json_schema(schema: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     Kiro API returns 400 "Improperly formed request" error if:
     - required is an empty array []
     - additionalProperties is present in schema
+    - $schema field is present
+    - title field is present in nested schemas
+    - anyOf with complex types (simplify to first option)
     
     This function recursively processes the schema and removes problematic fields.
     
@@ -236,6 +239,14 @@ def sanitize_json_schema(schema: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     if not schema:
         return {}
     
+    # Fields that Kiro API doesn't accept
+    SKIP_FIELDS = {
+        "additionalProperties",
+        "$schema",
+        "title",  # Kiro doesn't like title in nested schemas
+        "default",  # Some APIs send default values
+    }
+    
     result = {}
     
     for key, value in schema.items():
@@ -243,8 +254,23 @@ def sanitize_json_schema(schema: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         if key == "required" and isinstance(value, list) and len(value) == 0:
             continue
         
-        # Skip additionalProperties - Kiro API doesn't support it
-        if key == "additionalProperties":
+        # Skip fields that Kiro API doesn't support
+        if key in SKIP_FIELDS:
+            continue
+        
+        # Handle anyOf - Kiro may not support complex union types
+        # Simplify by taking the first non-null option
+        if key == "anyOf" and isinstance(value, list):
+            # Find first non-null type
+            for option in value:
+                if isinstance(option, dict):
+                    # Skip {"type": "null"} or {"not": {}}
+                    if option.get("type") == "null" or "not" in option:
+                        continue
+                    # Use this option's properties
+                    sanitized_option = sanitize_json_schema(option)
+                    result.update(sanitized_option)
+                    break
             continue
         
         # Recursively process nested objects
@@ -256,7 +282,7 @@ def sanitize_json_schema(schema: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         elif isinstance(value, dict):
             result[key] = sanitize_json_schema(value)
         elif isinstance(value, list):
-            # Process lists (e.g., anyOf, oneOf)
+            # Process lists (e.g., oneOf, allOf)
             result[key] = [
                 sanitize_json_schema(item) if isinstance(item, dict) else item
                 for item in value
@@ -360,7 +386,6 @@ def convert_tools_to_kiro_format(tools: Optional[List[UnifiedTool]]) -> List[Dic
         description = tool.description
         if not description or not description.strip():
             description = f"Tool: {tool.name}"
-            logger.debug(f"Tool '{tool.name}' has empty description, using placeholder")
         
         kiro_tools.append({
             "toolSpecification": {
@@ -376,6 +401,57 @@ def convert_tools_to_kiro_format(tools: Optional[List[UnifiedTool]]) -> List[Dic
 # ==================================================================================================
 # Tool Results and Tool Uses Extraction
 # ==================================================================================================
+
+def convert_tool_results_to_kiro_format(tool_results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Converts tool results from unified/OpenAI format to Kiro API format.
+    
+    Input format (OpenAI/unified):
+    {
+        "type": "tool_result",
+        "tool_use_id": "...",
+        "content": "..."
+    }
+    
+    Output format (Kiro):
+    {
+        "content": [{"text": "..."}],
+        "status": "success",
+        "toolUseId": "..."
+    }
+    
+    Args:
+        tool_results: List of tool results in OpenAI/unified format
+    
+    Returns:
+        List of tool results in Kiro format
+    """
+    kiro_results = []
+    
+    for result in tool_results:
+        # Check if already in Kiro format (has "toolUseId" key)
+        if "toolUseId" in result:
+            kiro_results.append(result)
+            continue
+        
+        # Convert from OpenAI/unified format
+        content_text = result.get("content", "")
+        if isinstance(content_text, list):
+            # Extract text from list content
+            content_text = extract_text_content(content_text)
+        
+        # Ensure content is not empty - Kiro API requires non-empty content
+        if not content_text:
+            content_text = "(empty result)"
+        
+        kiro_results.append({
+            "content": [{"text": str(content_text)}],
+            "status": "success",
+            "toolUseId": result.get("tool_use_id", result.get("toolUseId", ""))
+        })
+    
+    return kiro_results
+
 
 def extract_tool_results_from_content(content: Any) -> List[Dict[str, Any]]:
     """
@@ -396,7 +472,7 @@ def extract_tool_results_from_content(content: Any) -> List[Dict[str, Any]]:
         for item in content:
             if isinstance(item, dict) and item.get("type") == "tool_result":
                 tool_results.append({
-                    "content": [{"text": extract_text_content(item.get("content", ""))}],
+                    "content": [{"text": extract_text_content(item.get("content", "")) or "(empty result)"}],
                     "status": "success",
                     "toolUseId": item.get("tool_use_id", "")
                 })
@@ -458,6 +534,124 @@ def extract_tool_uses_from_message(
 # Message Merging
 # ==================================================================================================
 
+def strip_all_tool_content(messages: List[UnifiedMessage]) -> Tuple[List[UnifiedMessage], bool]:
+    """
+    Strips ALL tool-related content from messages.
+    
+    This is used when no tools are defined in the request. Kiro API rejects
+    requests that have toolResults but no tools defined.
+    
+    Args:
+        messages: List of messages in unified format
+    
+    Returns:
+        Tuple of:
+        - List of messages with all tool content stripped
+        - Boolean indicating whether any tool content was stripped
+    """
+    if not messages:
+        return [], False
+    
+    result = []
+    total_tool_calls_stripped = 0
+    total_tool_results_stripped = 0
+    
+    for msg in messages:
+        # Check if this message has any tool content
+        has_tool_calls = bool(msg.tool_calls)
+        has_tool_results = bool(msg.tool_results)
+        
+        if has_tool_calls or has_tool_results:
+            if has_tool_calls:
+                total_tool_calls_stripped += len(msg.tool_calls)
+            if has_tool_results:
+                total_tool_results_stripped += len(msg.tool_results)
+            
+            # Create a copy of the message without tool content
+            cleaned_msg = UnifiedMessage(
+                role=msg.role,
+                content=msg.content,
+                tool_calls=None,
+                tool_results=None
+            )
+            result.append(cleaned_msg)
+        else:
+            result.append(msg)
+    
+    had_tool_content = total_tool_calls_stripped > 0 or total_tool_results_stripped > 0
+    
+    # Log summary once (DEBUG level - this is normal for clients like Cline/Roo)
+    if had_tool_content:
+        logger.debug(
+            f"Stripped tool content (no tools defined): "
+            f"{total_tool_calls_stripped} tool_calls, {total_tool_results_stripped} tool_results"
+        )
+    
+    return result, had_tool_content
+
+
+def ensure_assistant_before_tool_results(messages: List[UnifiedMessage]) -> Tuple[List[UnifiedMessage], bool]:
+    """
+    Ensures that messages with tool_results have a preceding assistant message with tool_calls.
+    
+    Kiro API requires that when toolResults are present, there must be a preceding
+    assistantResponseMessage with toolUses. Some clients (like Cline/Roo) may send
+    truncated conversations where the assistant message is missing.
+    
+    Since we don't know the original tool name and arguments when the assistant message
+    is missing, we cannot create a valid synthetic assistant message. Instead, we strip
+    the tool_results from such messages to avoid Kiro API rejection.
+    
+    Args:
+        messages: List of messages in unified format
+    
+    Returns:
+        Tuple of:
+        - List of messages with orphaned tool_results stripped
+        - Boolean indicating whether any tool_results were stripped (used to skip thinking tag injection)
+    """
+    if not messages:
+        return [], False
+    
+    result = []
+    stripped_any_tool_results = False
+    
+    for msg in messages:
+        # Check if this message has tool_results
+        if msg.tool_results:
+            # Check if the previous message is an assistant with tool_calls
+            has_preceding_assistant = (
+                result and
+                result[-1].role == "assistant" and
+                result[-1].tool_calls
+            )
+            
+            if not has_preceding_assistant:
+                # We cannot create a valid synthetic assistant message because we don't know
+                # the original tool name and arguments. Kiro API validates tool names.
+                # Strip the tool_results to avoid "Improperly formed request" error.
+                logger.warning(
+                    f"Stripping {len(msg.tool_results)} orphaned tool_results "
+                    f"(no preceding assistant message with tool_calls). "
+                    f"Tool IDs: {[tr.get('tool_use_id', 'unknown') for tr in msg.tool_results]}"
+                )
+                
+                # Create a copy of the message without tool_results
+                cleaned_msg = UnifiedMessage(
+                    role=msg.role,
+                    content=msg.content,
+                    tool_calls=msg.tool_calls,
+                    tool_results=None  # Strip orphaned tool_results
+                )
+                result.append(cleaned_msg)
+                stripped_any_tool_results = True
+                continue
+        
+        result.append(msg)
+    
+    return result, stripped_any_tool_results
+
+
 def merge_adjacent_messages(messages: List[UnifiedMessage]) -> List[UnifiedMessage]:
     """
     Merges adjacent messages with the same role.
@@ -475,6 +669,11 @@ def merge_adjacent_messages(messages: List[UnifiedMessage]) -> List[UnifiedMessa
         return []
     
     merged = []
+    # Statistics for summary logging
+    merge_counts = {"user": 0, "assistant": 0}
+    total_tool_calls_merged = 0
+    total_tool_results_merged = 0
+    
     for msg in messages:
         if not merged:
             merged.append(msg)
@@ -499,18 +698,40 @@ def merge_adjacent_messages(messages: List[UnifiedMessage]) -> List[UnifiedMessa
                 if last.tool_calls is None:
                     last.tool_calls = []
                 last.tool_calls = list(last.tool_calls) + list(msg.tool_calls)
-                logger.debug(f"Merged tool_calls: added {len(msg.tool_calls)} tool calls")
+                total_tool_calls_merged += len(msg.tool_calls)
             
             # Merge tool_results for user messages
             if msg.role == "user" and msg.tool_results:
                 if last.tool_results is None:
                     last.tool_results = []
                 last.tool_results = list(last.tool_results) + list(msg.tool_results)
-                logger.debug(f"Merged tool_results: added {len(msg.tool_results)} tool results")
+                total_tool_results_merged += len(msg.tool_results)
             
-            logger.debug(f"Merged adjacent messages with role {msg.role}")
+            # Count merges by role
+            if msg.role in merge_counts:
+                merge_counts[msg.role] += 1
         else:
             merged.append(msg)
+    
+    # Log summary if any merges occurred
+    total_merges = sum(merge_counts.values())
+    if total_merges > 0:
+        parts = []
+        for role, count in merge_counts.items():
+            if count > 0:
+                parts.append(f"{count} {role}")
+        merge_summary = ", ".join(parts)
+        
+        extras = []
+        if total_tool_calls_merged > 0:
+            extras.append(f"{total_tool_calls_merged} tool_calls")
+        if total_tool_results_merged > 0:
+            extras.append(f"{total_tool_results_merged} tool_results")
+        
+        if extras:
+            logger.debug(f"Merged {total_merges} adjacent messages ({merge_summary}), including {', '.join(extras)}")
+        else:
+            logger.debug(f"Merged {total_merges} adjacent messages ({merge_summary})")
     
     return merged
 
@@ -545,10 +766,12 @@ def build_kiro_history(messages: List[UnifiedMessage], model_id: str) -> List[Di
                 "origin": "AI_EDITOR",
             }
             
-            # Process tool_results
+            # Process tool_results - convert to Kiro format
             tool_results = msg.tool_results or extract_tool_results_from_content(msg.content)
             if tool_results:
-                user_input["userInputMessageContext"] = {"toolResults": tool_results}
+                kiro_tool_results = convert_tool_results_to_kiro_format(tool_results)
+                if kiro_tool_results:
+                    user_input["userInputMessageContext"] = {"toolResults": kiro_tool_results}
             
             history.append({"userInputMessage": user_input})
             
@@ -614,8 +837,19 @@ def build_kiro_payload(
     if thinking_system_addition:
         full_system_prompt = full_system_prompt + thinking_system_addition if full_system_prompt else thinking_system_addition.strip()
     
+    # If no tools are defined, strip ALL tool-related content from messages
+    # Kiro API rejects requests with toolResults but no tools
+    if not tools:
+        messages_without_tools, had_tool_content = strip_all_tool_content(messages)
+        messages_with_assistants = messages_without_tools
+        stripped_tool_results = had_tool_content
+    else:
+        # Ensure assistant messages exist before tool_results (Kiro API requirement)
+        # Also returns flag if any tool_results were stripped (to skip thinking tag injection)
+        messages_with_assistants, stripped_tool_results = ensure_assistant_before_tool_results(messages)
+    
     # Merge adjacent messages with the same role
-    merged_messages = merge_adjacent_messages(messages)
+    merged_messages = merge_adjacent_messages(messages_with_assistants)
     
     if not merged_messages:
         raise ValueError("No messages to send")
@@ -665,15 +899,13 @@ def build_kiro_payload(
     # Process tool_results in current message
     tool_results = current_message.tool_results or extract_tool_results_from_content(current_message.content)
     if tool_results:
-        user_input_context["toolResults"] = tool_results
+        kiro_tool_results = convert_tool_results_to_kiro_format(tool_results)
+        if kiro_tool_results:
+            user_input_context["toolResults"] = kiro_tool_results
     
     # Inject thinking tags if enabled (only for the current/last user message)
-    # Skip injection when toolResults are present - Kiro API rejects this combination
-    has_tool_results = "toolResults" in user_input_context
-    if inject_thinking and current_message.role == "user" and not has_tool_results:
+    if inject_thinking and current_message.role == "user":
         current_content = inject_thinking_tags(current_content)
-    elif has_tool_results:
-        logger.debug("Skipping thinking tag injection: toolResults present in current message")
     
     # Build userInputMessage
     user_input_message = {

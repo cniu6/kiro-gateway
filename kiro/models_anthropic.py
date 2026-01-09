@@ -45,6 +45,23 @@ class TextContentBlock(BaseModel):
     text: str
 
 
+class ThinkingContentBlock(BaseModel):
+    """
+    Thinking content block in Anthropic format.
+    
+    Represents the model's reasoning/thinking process.
+    Used when extended thinking is enabled.
+    
+    Attributes:
+        type: Always "thinking"
+        thinking: The thinking/reasoning content
+        signature: Cryptographic signature for verification (placeholder in our case)
+    """
+    type: Literal["thinking"] = "thinking"
+    thinking: str
+    signature: str = ""
+
+
 class ToolUseContentBlock(BaseModel):
     """
     Tool use content block in Anthropic format.
@@ -132,6 +149,24 @@ ToolChoice = Union[ToolChoiceAuto, ToolChoiceAny, ToolChoiceTool]
 # Request Models
 # ==================================================================================================
 
+class SystemContentBlock(BaseModel):
+    """
+    System content block for prompt caching.
+    
+    Anthropic API supports system as a list of content blocks
+    with optional cache_control for prompt caching.
+    """
+    type: Literal["text"] = "text"
+    text: str
+    cache_control: Optional[Dict[str, Any]] = None
+    
+    model_config = {"extra": "allow"}
+
+
+# System can be a string or list of content blocks (for prompt caching)
+SystemPrompt = Union[str, List[SystemContentBlock], List[Dict[str, Any]]]
+
+
 class AnthropicMessagesRequest(BaseModel):
     """
     Request to Anthropic Messages API (/v1/messages).
@@ -140,7 +175,7 @@ class AnthropicMessagesRequest(BaseModel):
         model: Model ID (e.g., "claude-sonnet-4-5")
         messages: List of conversation messages
         max_tokens: Maximum tokens in response (required)
-        system: System prompt (optional, separate from messages)
+        system: System prompt (optional, string or list of content blocks for caching)
         stream: Whether to stream the response
         tools: List of available tools
         tool_choice: Tool selection strategy
@@ -154,8 +189,8 @@ class AnthropicMessagesRequest(BaseModel):
     messages: List[AnthropicMessage] = Field(min_length=1)
     max_tokens: int
     
-    # Optional parameters
-    system: Optional[str] = None
+    # Optional parameters - system can be string or list of content blocks
+    system: Optional[SystemPrompt] = None
     stream: bool = False
     
     # Tools
@@ -198,7 +233,7 @@ class AnthropicMessagesResponse(BaseModel):
         id: Unique message ID
         type: Always "message"
         role: Always "assistant"
-        content: List of content blocks
+        content: List of content blocks (may include thinking, text, tool_use)
         model: Model used
         stop_reason: Why generation stopped
         stop_sequence: Stop sequence that triggered stop (if any)
@@ -207,7 +242,7 @@ class AnthropicMessagesResponse(BaseModel):
     id: str
     type: Literal["message"] = "message"
     role: Literal["assistant"] = "assistant"
-    content: List[Union[TextContentBlock, ToolUseContentBlock]]
+    content: List[Union[ThinkingContentBlock, TextContentBlock, ToolUseContentBlock]]
     model: str
     stop_reason: Optional[Literal["end_turn", "max_tokens", "stop_sequence", "tool_use"]] = None
     stop_sequence: Optional[str] = None
@@ -247,6 +282,12 @@ class TextDelta(BaseModel):
     text: str
 
 
+class ThinkingDelta(BaseModel):
+    """Delta for thinking content."""
+    type: Literal["thinking_delta"] = "thinking_delta"
+    thinking: str
+
+
 class InputJsonDelta(BaseModel):
     """Delta for tool input JSON."""
     type: Literal["input_json_delta"] = "input_json_delta"
@@ -259,11 +300,11 @@ class ContentBlockDeltaEvent(BaseModel):
     
     Attributes:
         index: Index of the content block being updated
-        delta: The delta update (text_delta or input_json_delta)
+        delta: The delta update (text_delta, thinking_delta, or input_json_delta)
     """
     type: Literal["content_block_delta"] = "content_block_delta"
     index: int
-    delta: Union[TextDelta, InputJsonDelta, Dict[str, Any]]
+    delta: Union[TextDelta, ThinkingDelta, InputJsonDelta, Dict[str, Any]]
 
 
 class ContentBlockStopEvent(BaseModel):

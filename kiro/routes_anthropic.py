@@ -44,9 +44,13 @@ from kiro.models_anthropic import (
 from kiro.auth import KiroAuthManager, AuthType
 from kiro.cache import ModelInfoCache
 from kiro.converters_anthropic import anthropic_to_kiro
-from kiro.streaming_anthropic import stream_kiro_to_anthropic, collect_anthropic_response
+from kiro.streaming_anthropic import (
+    stream_kiro_to_anthropic,
+    collect_anthropic_response,
+)
 from kiro.http_client import KiroHttpClient
 from kiro.utils import generate_conversation_id
+from kiro.tokenizer import count_tools_tokens
 
 # Import debug_logger
 try:
@@ -137,10 +141,7 @@ async def messages(
     Raises:
         HTTPException: On validation or API errors
     """
-    logger.info(
-        f"Request to /v1/messages (model={request_data.model}, "
-        f"stream={request_data.stream}, max_tokens={request_data.max_tokens})"
-    )
+    logger.info(f"Request to /v1/messages (model={request_data.model}, stream={request_data.stream})")
     
     if anthropic_version:
         logger.debug(f"Anthropic-Version header: {anthropic_version}")
@@ -201,8 +202,15 @@ async def messages(
     http_client = KiroHttpClient(auth_manager, shared_client=shared_client)
     url = f"{auth_manager.api_host}/generateAssistantResponse"
     
+    # Prepare data for token counting
+    # Convert Pydantic models to dicts for tokenizer
+    messages_for_tokenizer = [msg.model_dump() for msg in request_data.messages]
+    tools_for_tokenizer = [tool.model_dump() for tool in request_data.tools] if request_data.tools else None
+    
     try:
-        # Make request to Kiro API
+        # Make request to Kiro API (for both streaming and non-streaming modes)
+        # Important: we wait for Kiro response BEFORE returning StreamingResponse,
+        # so that we can return proper HTTP error codes if Kiro fails
         response = await http_client.request_with_retry(
             "POST",
             url,
@@ -220,7 +228,7 @@ async def messages(
             error_text = error_content.decode('utf-8', errors='replace')
             logger.error(f"Error from Kiro API: {response.status_code} - {error_text}")
             
-            # Try to parse JSON response from Kiro
+            # Try to parse JSON response from Kiro to extract error message
             error_message = error_text
             try:
                 error_json = json.loads(error_text)
@@ -231,7 +239,7 @@ async def messages(
             except (json.JSONDecodeError, KeyError):
                 pass
             
-            # Log access log for error
+            # Log access log for error (before flush, so it gets into app_logs)
             logger.warning(
                 f"HTTP {response.status_code} - POST /v1/messages - {error_message[:100]}"
             )
@@ -252,11 +260,8 @@ async def messages(
                 }
             )
         
-        # Prepare messages for token counting
-        messages_for_tokenizer = [msg.model_dump() for msg in request_data.messages]
-        
         if request_data.stream:
-            # Streaming mode
+            # Streaming mode - Kiro already returned 200, now stream the response
             async def stream_wrapper():
                 streaming_error = None
                 client_disconnected = False
@@ -274,13 +279,12 @@ async def messages(
                     logger.debug("Client disconnected during streaming (GeneratorExit in routes)")
                 except Exception as e:
                     streaming_error = e
-                    # Send error event
+                    # Send error event to client, then gracefully end the stream
                     try:
                         error_event = f'event: error\ndata: {json.dumps({"type": "error", "error": {"type": "api_error", "message": str(e)}})}\n\n'
                         yield error_event
                     except Exception:
                         pass
-                    raise
                 finally:
                     await http_client.close()
                     if streaming_error:
@@ -308,7 +312,7 @@ async def messages(
             )
         
         else:
-            # Non-streaming mode
+            # Non-streaming mode - collect entire response
             anthropic_response = await collect_anthropic_response(
                 response,
                 request_data.model,
