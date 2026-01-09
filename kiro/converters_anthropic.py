@@ -364,7 +364,12 @@ def anthropic_to_kiro(
     # Convert tools to unified format
     unified_tools = convert_anthropic_tools(request.tools)
     
+<<<<<<< HEAD
     # System prompt - convert from string or list of content blocks (for prompt caching)
+=======
+    # System prompt is already separate in Anthropic format!
+    # It can be a string or list of content blocks (for prompt caching)
+>>>>>>> upstream/main
     system_prompt = extract_system_prompt(request.system)
     
     # Get internal model ID

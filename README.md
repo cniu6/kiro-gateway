@@ -4,6 +4,8 @@
 
 **Proxy gateway for Kiro API (AWS CodeWhisperer)**
 
+Made with ❤️ by [@Jwadow](https://github.com/jwadow)
+
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-green.svg)](https://fastapi.tiangolo.com/)
@@ -606,9 +608,35 @@ By submitting a contribution to this project, you agree to the terms of our [Con
 
 ---
 
-## 👤 Author
+## 💖 Support the Project
 
-**Jwadow** — [@Jwadow](https://github.com/jwadow)
+<div align="center">
+
+<img src="https://raw.githubusercontent.com/Tarikul-Islam-Anik/Animated-Fluent-Emojis/master/Emojis/Smilies/Smiling%20Face%20with%20Hearts.png" alt="Love" width="80" />
+
+**If this project saved you time or money, consider supporting it!**
+
+Every contribution helps keep this project alive and growing
+
+<br>
+
+### 🤑 Donate
+
+[**☕ One-time Donation**](https://app.lava.top/jwadow?tabId=donate) &nbsp;•&nbsp; [**💎 Monthly Support**](https://app.lava.top/jwadow?tabId=subscriptions)
+
+<br>
+
+### 🪙 Or send crypto
+
+| Currency | Network | Address |
+|:--------:|:-------:|:--------|
+| **USDT** | TRC20 | `TSVtgRc9pkC1UgcbVeijBHjFmpkYHDRu26` |
+| **BTC** | Bitcoin | `12GZqxqpcBsqJ4Vf1YreLqwoMGvzBPgJq6` |
+| **ETH** | Ethereum | `0xc86eab3bba3bbaf4eb5b5fff8586f1460f1fd395` |
+| **SOL** | Solana | `9amykF7KibZmdaw66a1oqYJyi75fRqgdsqnG66AK3jvh` |
+| **TON** | TON | `UQBVh8T1H3GI7gd7b-_PPNnxHYYxptrcCVf3qQk5v41h3QTM` |
+
+</div>
 
 ---
 

@@ -404,24 +404,13 @@ def convert_tools_to_kiro_format(tools: Optional[List[UnifiedTool]]) -> List[Dic
 
 def convert_tool_results_to_kiro_format(tool_results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
-    Converts tool results from unified/OpenAI format to Kiro API format.
+    Converts unified tool results to Kiro API format.
     
-    Input format (OpenAI/unified):
-    {
-        "type": "tool_result",
-        "tool_use_id": "...",
-        "content": "..."
-    }
-    
-    Output format (Kiro):
-    {
-        "content": [{"text": "..."}],
-        "status": "success",
-        "toolUseId": "..."
-    }
+    Unified format: {"type": "tool_result", "tool_use_id": "...", "content": "..."}
+    Kiro format: {"content": [{"text": "..."}], "status": "success", "toolUseId": "..."}
     
     Args:
-        tool_results: List of tool results in OpenAI/unified format
+        tool_results: List of tool results in unified format
     
     Returns:
         List of tool results in Kiro format
@@ -434,18 +423,19 @@ def convert_tool_results_to_kiro_format(tool_results: List[Dict[str, Any]]) -> L
             kiro_results.append(result)
             continue
         
-        # Convert from OpenAI/unified format
-        content_text = result.get("content", "")
-        if isinstance(content_text, list):
-            # Extract text from list content
-            content_text = extract_text_content(content_text)
+        # Convert from unified format
+        content = result.get("content", "")
+        if isinstance(content, str):
+            content_text = content
+        else:
+            content_text = extract_text_content(content)
         
         # Ensure content is not empty - Kiro API requires non-empty content
         if not content_text:
             content_text = "(empty result)"
         
         kiro_results.append({
-            "content": [{"text": str(content_text)}],
+            "content": [{"text": content_text}],
             "status": "success",
             "toolUseId": result.get("tool_use_id", result.get("toolUseId", ""))
         })
@@ -766,12 +756,26 @@ def build_kiro_history(messages: List[UnifiedMessage], model_id: str) -> List[Di
                 "origin": "AI_EDITOR",
             }
             
+<<<<<<< HEAD
             # Process tool_results - convert to Kiro format
             tool_results = msg.tool_results or extract_tool_results_from_content(msg.content)
             if tool_results:
                 kiro_tool_results = convert_tool_results_to_kiro_format(tool_results)
                 if kiro_tool_results:
                     user_input["userInputMessageContext"] = {"toolResults": kiro_tool_results}
+=======
+            # Process tool_results - convert to Kiro format if present
+            if msg.tool_results:
+                # Convert unified format to Kiro format
+                kiro_tool_results = convert_tool_results_to_kiro_format(msg.tool_results)
+                if kiro_tool_results:
+                    user_input["userInputMessageContext"] = {"toolResults": kiro_tool_results}
+            else:
+                # Try to extract from content (already in Kiro format)
+                tool_results = extract_tool_results_from_content(msg.content)
+                if tool_results:
+                    user_input["userInputMessageContext"] = {"toolResults": tool_results}
+>>>>>>> upstream/main
             
             history.append({"userInputMessage": user_input})
             
@@ -896,12 +900,26 @@ def build_kiro_payload(
     if kiro_tools:
         user_input_context["tools"] = kiro_tools
     
+<<<<<<< HEAD
     # Process tool_results in current message
     tool_results = current_message.tool_results or extract_tool_results_from_content(current_message.content)
     if tool_results:
         kiro_tool_results = convert_tool_results_to_kiro_format(tool_results)
         if kiro_tool_results:
             user_input_context["toolResults"] = kiro_tool_results
+=======
+    # Process tool_results in current message - convert to Kiro format if present
+    if current_message.tool_results:
+        # Convert unified format to Kiro format
+        kiro_tool_results = convert_tool_results_to_kiro_format(current_message.tool_results)
+        if kiro_tool_results:
+            user_input_context["toolResults"] = kiro_tool_results
+    else:
+        # Try to extract from content (already in Kiro format)
+        tool_results = extract_tool_results_from_content(current_message.content)
+        if tool_results:
+            user_input_context["toolResults"] = tool_results
+>>>>>>> upstream/main
     
     # Inject thinking tags if enabled (only for the current/last user message)
     if inject_thinking and current_message.role == "user":
