@@ -947,10 +947,10 @@ class TestInjectThinkingTags:
         Purpose: Ensure tags are added to content.
         """
         print("Testing tag injection when enabled...")
-        from kiro.converters import inject_thinking_tags
+        from kiro.converters_openai import inject_thinking_tags
         
-        with patch('kiro.converters.FAKE_REASONING_ENABLED', True):
-            with patch('kiro.converters.FAKE_REASONING_MAX_TOKENS', 4000):
+        with patch('kiro.converters_openai.FAKE_REASONING_ENABLED', True):
+            with patch('kiro.converters_openai.FAKE_REASONING_MAX_TOKENS', 4000):
                 result = inject_thinking_tags("Hello")
         
         print(f"Result: '{result}'")
@@ -964,9 +964,9 @@ class TestInjectThinkingTags:
         Purpose: Ensure tags are not added when disabled.
         """
         print("Testing no tag injection when disabled...")
-        from kiro.converters import inject_thinking_tags
+        from kiro.converters_openai import inject_thinking_tags
         
-        with patch('kiro.converters.FAKE_REASONING_ENABLED', False):
+        with patch('kiro.converters_openai.FAKE_REASONING_ENABLED', False):
             result = inject_thinking_tags("Hello")
         
         print(f"Result: '{result}'")
@@ -979,12 +979,12 @@ class TestInjectThinkingTags:
         Purpose: Ensure content is not modified.
         """
         print("Testing content preservation...")
-        from kiro.converters import inject_thinking_tags
+        from kiro.converters_openai import inject_thinking_tags
         
         original = "This is my original content with special chars: <>&"
         
-        with patch('kiro.converters.FAKE_REASONING_ENABLED', True):
-            with patch('kiro.converters.FAKE_REASONING_MAX_TOKENS', 4000):
+        with patch('kiro.converters_openai.FAKE_REASONING_ENABLED', True):
+            with patch('kiro.converters_openai.FAKE_REASONING_MAX_TOKENS', 4000):
                 result = inject_thinking_tags(original)
         
         print(f"Result ends with original: {result.endswith(original)}")

@@ -83,7 +83,7 @@ class KiroHttpClient:
         - pool: waiting for free connection from pool
         
         IMPORTANT: FIRST_TOKEN_TIMEOUT is NOT used here!
-        It is applied in streaming.py via asyncio.wait_for() to control
+        It is applied in streaming_openai.py via asyncio.wait_for() to control
         the wait time for the first token from the model (retry business logic).
         
         Args:
@@ -135,7 +135,7 @@ class KiroHttpClient:
         - Timeouts: waits with exponential backoff
         
         For streaming, STREAMING_READ_TIMEOUT is used for waiting between chunks.
-        First token timeout is controlled separately in streaming.py via asyncio.wait_for().
+        First token timeout is controlled separately in streaming_openai.py via asyncio.wait_for().
         
         Args:
             method: HTTP method (GET, POST, etc.)
@@ -150,7 +150,7 @@ class KiroHttpClient:
             HTTPException: On failure after all attempts (502/504)
         """
         # Determine the number of retry attempts
-        # FIRST_TOKEN_TIMEOUT is used in streaming.py, not here
+        # FIRST_TOKEN_TIMEOUT is used in streaming_openai.py, not here
         max_retries = FIRST_TOKEN_MAX_RETRIES if stream else MAX_RETRIES
         
         client = await self._get_client(stream=stream)

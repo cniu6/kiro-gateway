@@ -10,7 +10,7 @@ import pytest
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from kiro.streaming import (
+from kiro.streaming_openai import (
     stream_kiro_to_openai,
     collect_stream_response
 )
@@ -77,8 +77,8 @@ class TestStreamingToolCallsIndex:
         print("Action: Collecting streaming chunks...")
         chunks = []
         
-        with patch('kiro.streaming.AwsEventStreamParser', return_value=mock_parser):
-            with patch('kiro.streaming.parse_bracket_tool_calls', return_value=[]):
+        with patch('kiro.streaming_openai.AwsEventStreamParser', return_value=mock_parser):
+            with patch('kiro.streaming_openai.parse_bracket_tool_calls', return_value=[]):
                 async for chunk in stream_kiro_to_openai(
                     mock_http_client, mock_response, "test-model", 
                     mock_model_cache, mock_auth_manager
@@ -137,8 +137,8 @@ class TestStreamingToolCallsIndex:
         print("Action: Collecting streaming chunks...")
         chunks = []
         
-        with patch('kiro.streaming.AwsEventStreamParser', return_value=mock_parser):
-            with patch('kiro.streaming.parse_bracket_tool_calls', return_value=[]):
+        with patch('kiro.streaming_openai.AwsEventStreamParser', return_value=mock_parser):
+            with patch('kiro.streaming_openai.parse_bracket_tool_calls', return_value=[]):
                 async for chunk in stream_kiro_to_openai(
                     mock_http_client, mock_response, "test-model",
                     mock_model_cache, mock_auth_manager
@@ -197,8 +197,8 @@ class TestStreamingToolCallsNoneProtection:
         print("Action: Collecting streaming chunks...")
         chunks = []
         
-        with patch('kiro.streaming.AwsEventStreamParser', return_value=mock_parser):
-            with patch('kiro.streaming.parse_bracket_tool_calls', return_value=[]):
+        with patch('kiro.streaming_openai.AwsEventStreamParser', return_value=mock_parser):
+            with patch('kiro.streaming_openai.parse_bracket_tool_calls', return_value=[]):
                 async for chunk in stream_kiro_to_openai(
                     mock_http_client, mock_response, "test-model",
                     mock_model_cache, mock_auth_manager
@@ -256,8 +256,8 @@ class TestStreamingToolCallsNoneProtection:
         print("Action: Collecting streaming chunks...")
         chunks = []
         
-        with patch('kiro.streaming.AwsEventStreamParser', return_value=mock_parser):
-            with patch('kiro.streaming.parse_bracket_tool_calls', return_value=[]):
+        with patch('kiro.streaming_openai.AwsEventStreamParser', return_value=mock_parser):
+            with patch('kiro.streaming_openai.parse_bracket_tool_calls', return_value=[]):
                 async for chunk in stream_kiro_to_openai(
                     mock_http_client, mock_response, "test-model",
                     mock_model_cache, mock_auth_manager
@@ -312,8 +312,8 @@ class TestStreamingToolCallsNoneProtection:
         print("Action: Collecting streaming chunks...")
         chunks = []
         
-        with patch('kiro.streaming.AwsEventStreamParser', return_value=mock_parser):
-            with patch('kiro.streaming.parse_bracket_tool_calls', return_value=[]):
+        with patch('kiro.streaming_openai.AwsEventStreamParser', return_value=mock_parser):
+            with patch('kiro.streaming_openai.parse_bracket_tool_calls', return_value=[]):
                 async for chunk in stream_kiro_to_openai(
                     mock_http_client, mock_response, "test-model",
                     mock_model_cache, mock_auth_manager
@@ -357,8 +357,8 @@ class TestCollectStreamResponseToolCalls:
         
         print("Action: Collecting full response...")
         
-        with patch('kiro.streaming.AwsEventStreamParser', return_value=mock_parser):
-            with patch('kiro.streaming.parse_bracket_tool_calls', return_value=[]):
+        with patch('kiro.streaming_openai.AwsEventStreamParser', return_value=mock_parser):
+            with patch('kiro.streaming_openai.parse_bracket_tool_calls', return_value=[]):
                 result = await collect_stream_response(
                     mock_http_client, mock_response, "test-model",
                     mock_model_cache, mock_auth_manager
@@ -403,8 +403,8 @@ class TestCollectStreamResponseToolCalls:
         
         print("Action: Collecting full response...")
         
-        with patch('kiro.streaming.AwsEventStreamParser', return_value=mock_parser):
-            with patch('kiro.streaming.parse_bracket_tool_calls', return_value=[]):
+        with patch('kiro.streaming_openai.AwsEventStreamParser', return_value=mock_parser):
+            with patch('kiro.streaming_openai.parse_bracket_tool_calls', return_value=[]):
                 result = await collect_stream_response(
                     mock_http_client, mock_response, "test-model",
                     mock_model_cache, mock_auth_manager
@@ -453,8 +453,8 @@ class TestCollectStreamResponseToolCalls:
         
         print("Action: Collecting full response...")
         
-        with patch('kiro.streaming.AwsEventStreamParser', return_value=mock_parser):
-            with patch('kiro.streaming.parse_bracket_tool_calls', return_value=[]):
+        with patch('kiro.streaming_openai.AwsEventStreamParser', return_value=mock_parser):
+            with patch('kiro.streaming_openai.parse_bracket_tool_calls', return_value=[]):
                 result = await collect_stream_response(
                     mock_http_client, mock_response, "test-model",
                     mock_model_cache, mock_auth_manager
@@ -497,8 +497,8 @@ class TestStreamingErrorHandling:
         chunks_received = []
         generator_exit_caught = False
         
-        with patch('kiro.streaming.AwsEventStreamParser', return_value=mock_parser):
-            with patch('kiro.streaming.parse_bracket_tool_calls', return_value=[]):
+        with patch('kiro.streaming_openai.AwsEventStreamParser', return_value=mock_parser):
+            with patch('kiro.streaming_openai.parse_bracket_tool_calls', return_value=[]):
                 try:
                     async for chunk in stream_kiro_to_openai(
                         mock_http_client, mock_response, "test-model",
@@ -546,9 +546,9 @@ class TestStreamingErrorHandling:
         
         print("Action: Running streaming with EmptyMessageError...")
         
-        with patch('kiro.streaming.AwsEventStreamParser', return_value=mock_parser):
-            with patch('kiro.streaming.parse_bracket_tool_calls', return_value=[]):
-                with patch('kiro.streaming.logger') as mock_logger:
+        with patch('kiro.streaming_openai.AwsEventStreamParser', return_value=mock_parser):
+            with patch('kiro.streaming_openai.parse_bracket_tool_calls', return_value=[]):
+                with patch('kiro.streaming_openai.logger') as mock_logger:
                     exception_raised = False
                     try:
                         async for chunk in stream_kiro_to_openai(
@@ -599,8 +599,8 @@ class TestStreamingErrorHandling:
         
         print("Action: Running streaming with RuntimeError...")
         
-        with patch('kiro.streaming.AwsEventStreamParser', return_value=mock_parser):
-            with patch('kiro.streaming.parse_bracket_tool_calls', return_value=[]):
+        with patch('kiro.streaming_openai.AwsEventStreamParser', return_value=mock_parser):
+            with patch('kiro.streaming_openai.parse_bracket_tool_calls', return_value=[]):
                 with pytest.raises(RuntimeError) as exc_info:
                     async for chunk in stream_kiro_to_openai(
                         mock_http_client, mock_response, "test-model",
@@ -636,8 +636,8 @@ class TestStreamingErrorHandling:
         
         print("Action: Running streaming with ValueError...")
         
-        with patch('kiro.streaming.AwsEventStreamParser', return_value=mock_parser):
-            with patch('kiro.streaming.parse_bracket_tool_calls', return_value=[]):
+        with patch('kiro.streaming_openai.AwsEventStreamParser', return_value=mock_parser):
+            with patch('kiro.streaming_openai.parse_bracket_tool_calls', return_value=[]):
                 try:
                     async for chunk in stream_kiro_to_openai(
                         mock_http_client, mock_response, "test-model",
@@ -675,8 +675,8 @@ class TestStreamingErrorHandling:
         print("Action: Running successful streaming...")
         chunks = []
         
-        with patch('kiro.streaming.AwsEventStreamParser', return_value=mock_parser):
-            with patch('kiro.streaming.parse_bracket_tool_calls', return_value=[]):
+        with patch('kiro.streaming_openai.AwsEventStreamParser', return_value=mock_parser):
+            with patch('kiro.streaming_openai.parse_bracket_tool_calls', return_value=[]):
                 async for chunk in stream_kiro_to_openai(
                     mock_http_client, mock_response, "test-model",
                     mock_model_cache, mock_auth_manager
@@ -712,8 +712,8 @@ class TestStreamingErrorHandling:
         
         print("Action: Running streaming with error and error in aclose()...")
         
-        with patch('kiro.streaming.AwsEventStreamParser', return_value=mock_parser):
-            with patch('kiro.streaming.parse_bracket_tool_calls', return_value=[]):
+        with patch('kiro.streaming_openai.AwsEventStreamParser', return_value=mock_parser):
+            with patch('kiro.streaming_openai.parse_bracket_tool_calls', return_value=[]):
                 with pytest.raises(RuntimeError) as exc_info:
                     async for chunk in stream_kiro_to_openai(
                         mock_http_client, mock_response, "test-model",
@@ -737,7 +737,7 @@ class TestFirstTokenTimeoutError:
         Goal: Ensure first token timeout is not handled as regular error.
         """
         import asyncio
-        from kiro.streaming import FirstTokenTimeoutError, stream_kiro_to_openai_internal
+        from kiro.streaming_openai import FirstTokenTimeoutError, stream_kiro_to_openai_internal
         
         print("Setup: Mock response with timeout...")
         
@@ -757,7 +757,7 @@ class TestFirstTokenTimeoutError:
         async def mock_wait_for_timeout(*args, **kwargs):
             raise asyncio.TimeoutError()
         
-        with patch('kiro.streaming.asyncio.wait_for', side_effect=mock_wait_for_timeout):
+        with patch('kiro.streaming_openai.asyncio.wait_for', side_effect=mock_wait_for_timeout):
             with pytest.raises(FirstTokenTimeoutError) as exc_info:
                 async for chunk in stream_kiro_to_openai_internal(
                     mock_http_client, mock_response, "test-model",
@@ -780,7 +780,7 @@ class TestFirstTokenTimeoutError:
         Goal: Ensure consistent logging format for first token timeout.
         """
         import asyncio
-        from kiro.streaming import FirstTokenTimeoutError, stream_kiro_to_openai_internal
+        from kiro.streaming_openai import FirstTokenTimeoutError, stream_kiro_to_openai_internal
         
         print("Setup: Mock response with timeout...")
         
@@ -798,8 +798,8 @@ class TestFirstTokenTimeoutError:
         
         print("Action: Running streaming with timeout and checking logs...")
         
-        with patch('kiro.streaming.asyncio.wait_for', side_effect=mock_wait_for_timeout):
-            with patch('kiro.streaming.logger') as mock_logger:
+        with patch('kiro.streaming_openai.asyncio.wait_for', side_effect=mock_wait_for_timeout):
+            with patch('kiro.streaming_openai.logger') as mock_logger:
                 try:
                     async for chunk in stream_kiro_to_openai_internal(
                         mock_http_client, mock_response, "test-model",
@@ -825,7 +825,7 @@ class TestFirstTokenTimeoutError:
         Goal: Ensure timeout value is visible in logs for debugging.
         """
         import asyncio
-        from kiro.streaming import FirstTokenTimeoutError, stream_kiro_to_openai_internal
+        from kiro.streaming_openai import FirstTokenTimeoutError, stream_kiro_to_openai_internal
         
         print("Setup: Mock response with timeout...")
         
@@ -845,8 +845,8 @@ class TestFirstTokenTimeoutError:
         
         print(f"Action: Running streaming with custom timeout={custom_timeout}...")
         
-        with patch('kiro.streaming.asyncio.wait_for', side_effect=mock_wait_for_timeout):
-            with patch('kiro.streaming.logger') as mock_logger:
+        with patch('kiro.streaming_openai.asyncio.wait_for', side_effect=mock_wait_for_timeout):
+            with patch('kiro.streaming_openai.logger') as mock_logger:
                 try:
                     async for chunk in stream_kiro_to_openai_internal(
                         mock_http_client, mock_response, "test-model",
@@ -871,7 +871,7 @@ class TestFirstTokenTimeoutError:
         What it does: Verifies that successful first token receipt is logged.
         Goal: Ensure debug log shows when first token is received.
         """
-        from kiro.streaming import stream_kiro_to_openai_internal
+        from kiro.streaming_openai import stream_kiro_to_openai_internal
         
         print("Setup: Mock response with successful first token...")
         
@@ -890,9 +890,9 @@ class TestFirstTokenTimeoutError:
         
         print("Action: Running streaming and checking debug logs...")
         
-        with patch('kiro.streaming.AwsEventStreamParser', return_value=mock_parser):
-            with patch('kiro.streaming.parse_bracket_tool_calls', return_value=[]):
-                with patch('kiro.streaming.logger') as mock_logger:
+        with patch('kiro.streaming_openai.AwsEventStreamParser', return_value=mock_parser):
+            with patch('kiro.streaming_openai.parse_bracket_tool_calls', return_value=[]):
+                with patch('kiro.streaming_openai.logger') as mock_logger:
                     chunks = []
                     async for chunk in stream_kiro_to_openai_internal(
                         mock_http_client, mock_response, "test-model",
@@ -921,7 +921,7 @@ class TestStreamWithFirstTokenRetry:
         Goal: Ensure retry logic works for first token timeout.
         """
         import asyncio
-        from kiro.streaming import stream_with_first_token_retry, FirstTokenTimeoutError
+        from kiro.streaming_openai import stream_with_first_token_retry, FirstTokenTimeoutError
         
         print("Setup: Mock make_request that succeeds on second attempt...")
         
@@ -958,9 +958,9 @@ class TestStreamWithFirstTokenRetry:
         
         print("Action: Running stream_with_first_token_retry...")
         
-        with patch('kiro.streaming.AwsEventStreamParser', return_value=mock_parser):
-            with patch('kiro.streaming.parse_bracket_tool_calls', return_value=[]):
-                with patch('kiro.streaming.asyncio.wait_for', side_effect=mock_wait_for_with_retry):
+        with patch('kiro.streaming_openai.AwsEventStreamParser', return_value=mock_parser):
+            with patch('kiro.streaming_openai.parse_bracket_tool_calls', return_value=[]):
+                with patch('kiro.streaming_openai.asyncio.wait_for', side_effect=mock_wait_for_with_retry):
                     chunks = []
                     async for chunk in stream_with_first_token_retry(
                         mock_make_request,
@@ -988,7 +988,7 @@ class TestStreamWithFirstTokenRetry:
         """
         import asyncio
         from fastapi import HTTPException
-        from kiro.streaming import stream_with_first_token_retry
+        from kiro.streaming_openai import stream_with_first_token_retry
         
         print("Setup: Mock make_request that always times out...")
         
@@ -1016,7 +1016,7 @@ class TestStreamWithFirstTokenRetry:
         
         print(f"Action: Running stream_with_first_token_retry with max_retries={max_retries}...")
         
-        with patch('kiro.streaming.asyncio.wait_for', side_effect=mock_wait_for_always_timeout):
+        with patch('kiro.streaming_openai.asyncio.wait_for', side_effect=mock_wait_for_always_timeout):
             with pytest.raises(HTTPException) as exc_info:
                 async for chunk in stream_with_first_token_retry(
                     mock_make_request,
@@ -1047,7 +1047,7 @@ class TestStreamWithFirstTokenRetry:
         """
         import asyncio
         from fastapi import HTTPException
-        from kiro.streaming import stream_with_first_token_retry
+        from kiro.streaming_openai import stream_with_first_token_retry
         
         print("Setup: Mock make_request that always times out...")
         
@@ -1068,8 +1068,8 @@ class TestStreamWithFirstTokenRetry:
         
         print("Action: Running stream_with_first_token_retry and checking logs...")
         
-        with patch('kiro.streaming.asyncio.wait_for', side_effect=mock_wait_for_always_timeout):
-            with patch('kiro.streaming.logger') as mock_logger:
+        with patch('kiro.streaming_openai.asyncio.wait_for', side_effect=mock_wait_for_always_timeout):
+            with patch('kiro.streaming_openai.logger') as mock_logger:
                 try:
                     async for chunk in stream_with_first_token_retry(
                         mock_make_request,

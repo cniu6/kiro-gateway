@@ -70,7 +70,7 @@ from kiro.config import (
 )
 from kiro.auth import KiroAuthManager
 from kiro.cache import ModelInfoCache
-from kiro.routes import router
+from kiro.routes_openai import router
 from kiro.exceptions import validation_exception_handler
 
 

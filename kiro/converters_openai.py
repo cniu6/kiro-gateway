@@ -38,7 +38,7 @@ from kiro.config import (
     FAKE_REASONING_ENABLED,
     FAKE_REASONING_MAX_TOKENS,
 )
-from kiro.models import ChatMessage, ChatCompletionRequest, Tool
+from kiro.models_openai import ChatMessage, ChatCompletionRequest, Tool
 
 
 def extract_text_content(content: Any) -> str:
@@ -408,7 +408,7 @@ def process_tools_with_long_descriptions(
             
             # Create copy of tool with reference description
             # Use Tool model to create new copy
-            from kiro.models import ToolFunction
+            from kiro.models_openai import ToolFunction
             
             reference_description = f"[Full documentation in system prompt under '## Tool: {tool_name}']"
             

@@ -528,7 +528,7 @@ async def stream_kiro_to_openai_internal(
             f"Error during streaming: [{error_type}] {error_msg}",
             exc_info=True
         )
-        # Propagate error up for proper handling in routes.py
+        # Propagate error up for proper handling in routes_openai.py
         raise
     finally:
         # Always close response

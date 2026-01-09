@@ -9,7 +9,7 @@ import pytest
 
 from unittest.mock import patch
 
-from kiro.converters import (
+from kiro.converters_openai import (
     extract_text_content,
     merge_adjacent_messages,
     build_kiro_history,
@@ -21,7 +21,7 @@ from kiro.converters import (
     _build_user_input_context,
     _sanitize_json_schema
 )
-from kiro.models import ChatMessage, ChatCompletionRequest, Tool, ToolFunction
+from kiro.models_openai import ChatMessage, ChatCompletionRequest, Tool, ToolFunction
 
 
 class TestExtractTextContent:
@@ -751,7 +751,7 @@ class TestProcessToolsWithLongDescriptions:
         )]
         
         print("Action: Processing tools...")
-        with patch('kiro.converters.TOOL_DESCRIPTION_MAX_LENGTH', 10000):
+        with patch('kiro.converters_openai.TOOL_DESCRIPTION_MAX_LENGTH', 10000):
             processed, doc = process_tools_with_long_descriptions(tools)
         
         print(f"Comparing description: Expected 'Get weather for a location', Got '{processed[0].function.description}'")
@@ -776,7 +776,7 @@ class TestProcessToolsWithLongDescriptions:
         )]
         
         print("Action: Processing tools with limit 10000...")
-        with patch('kiro.converters.TOOL_DESCRIPTION_MAX_LENGTH', 10000):
+        with patch('kiro.converters_openai.TOOL_DESCRIPTION_MAX_LENGTH', 10000):
             processed, doc = process_tools_with_long_descriptions(tools)
         
         print(f"Checking reference in description...")
@@ -816,7 +816,7 @@ class TestProcessToolsWithLongDescriptions:
         ]
         
         print("Action: Processing tools...")
-        with patch('kiro.converters.TOOL_DESCRIPTION_MAX_LENGTH', 10000):
+        with patch('kiro.converters_openai.TOOL_DESCRIPTION_MAX_LENGTH', 10000):
             processed, doc = process_tools_with_long_descriptions(tools)
         
         print(f"Checking tools count: Expected 2, Got {len(processed)}")
@@ -854,7 +854,7 @@ class TestProcessToolsWithLongDescriptions:
         )]
         
         print("Action: Processing tools...")
-        with patch('kiro.converters.TOOL_DESCRIPTION_MAX_LENGTH', 10000):
+        with patch('kiro.converters_openai.TOOL_DESCRIPTION_MAX_LENGTH', 10000):
             processed, doc = process_tools_with_long_descriptions(tools)
         
         print(f"Checking parameters preservation...")
@@ -877,7 +877,7 @@ class TestProcessToolsWithLongDescriptions:
         )]
         
         print("Action: Processing tools with limit 0...")
-        with patch('kiro.converters.TOOL_DESCRIPTION_MAX_LENGTH', 0):
+        with patch('kiro.converters_openai.TOOL_DESCRIPTION_MAX_LENGTH', 0):
             processed, doc = process_tools_with_long_descriptions(tools)
         
         print(f"Checking that description is unchanged...")
@@ -901,7 +901,7 @@ class TestProcessToolsWithLongDescriptions:
         )]
         
         print("Action: Processing tools...")
-        with patch('kiro.converters.TOOL_DESCRIPTION_MAX_LENGTH', 10000):
+        with patch('kiro.converters_openai.TOOL_DESCRIPTION_MAX_LENGTH', 10000):
             processed, doc = process_tools_with_long_descriptions(tools)
         
         print(f"Checking that tool is unchanged...")
@@ -922,7 +922,7 @@ class TestProcessToolsWithLongDescriptions:
         ]
         
         print("Action: Processing tools...")
-        with patch('kiro.converters.TOOL_DESCRIPTION_MAX_LENGTH', 10000):
+        with patch('kiro.converters_openai.TOOL_DESCRIPTION_MAX_LENGTH', 10000):
             processed, doc = process_tools_with_long_descriptions(tools)
         
         print(f"Checking all three tools...")
@@ -951,7 +951,7 @@ class TestProcessToolsWithLongDescriptions:
         )]
         
         print("Action: Processing tools...")
-        with patch('kiro.converters.TOOL_DESCRIPTION_MAX_LENGTH', 10000):
+        with patch('kiro.converters_openai.TOOL_DESCRIPTION_MAX_LENGTH', 10000):
             processed, doc = process_tools_with_long_descriptions(tools)
         
         print(f"Checking that empty description remains empty...")
@@ -974,7 +974,7 @@ class TestProcessToolsWithLongDescriptions:
         )]
         
         print("Action: Processing tools...")
-        with patch('kiro.converters.TOOL_DESCRIPTION_MAX_LENGTH', 10000):
+        with patch('kiro.converters_openai.TOOL_DESCRIPTION_MAX_LENGTH', 10000):
             processed, doc = process_tools_with_long_descriptions(tools)
         
         print(f"Checking that None description is handled correctly...")
@@ -1497,7 +1497,7 @@ class TestInjectThinkingTags:
         content = "Hello, world!"
         
         print("Action: Inject thinking tags with FAKE_REASONING_ENABLED=False...")
-        with patch('kiro.converters.FAKE_REASONING_ENABLED', False):
+        with patch('kiro.converters_openai.FAKE_REASONING_ENABLED', False):
             result = inject_thinking_tags(content)
         
         print(f"Comparing result: Expected 'Hello, world!', Got '{result}'")
@@ -1512,8 +1512,8 @@ class TestInjectThinkingTags:
         content = "What is 2+2?"
         
         print("Action: Inject thinking tags with FAKE_REASONING_ENABLED=True...")
-        with patch('kiro.converters.FAKE_REASONING_ENABLED', True):
-            with patch('kiro.converters.FAKE_REASONING_MAX_TOKENS', 4000):
+        with patch('kiro.converters_openai.FAKE_REASONING_ENABLED', True):
+            with patch('kiro.converters_openai.FAKE_REASONING_MAX_TOKENS', 4000):
                 result = inject_thinking_tags(content)
         
         print(f"Result: {result[:200]}...")
@@ -1535,8 +1535,8 @@ class TestInjectThinkingTags:
         content = "Analyze this code"
         
         print("Action: Inject thinking tags...")
-        with patch('kiro.converters.FAKE_REASONING_ENABLED', True):
-            with patch('kiro.converters.FAKE_REASONING_MAX_TOKENS', 8000):
+        with patch('kiro.converters_openai.FAKE_REASONING_ENABLED', True):
+            with patch('kiro.converters_openai.FAKE_REASONING_MAX_TOKENS', 8000):
                 result = inject_thinking_tags(content)
         
         print(f"Result length: {len(result)} chars")
@@ -1553,8 +1553,8 @@ class TestInjectThinkingTags:
         content = "Test"
         
         print("Action: Inject thinking tags...")
-        with patch('kiro.converters.FAKE_REASONING_ENABLED', True):
-            with patch('kiro.converters.FAKE_REASONING_MAX_TOKENS', 4000):
+        with patch('kiro.converters_openai.FAKE_REASONING_ENABLED', True):
+            with patch('kiro.converters_openai.FAKE_REASONING_MAX_TOKENS', 4000):
                 result = inject_thinking_tags(content)
         
         print("Checking for English directive...")
@@ -1569,8 +1569,8 @@ class TestInjectThinkingTags:
         content = "Test"
         
         print("Action: Inject thinking tags...")
-        with patch('kiro.converters.FAKE_REASONING_ENABLED', True):
-            with patch('kiro.converters.FAKE_REASONING_MAX_TOKENS', 4000):
+        with patch('kiro.converters_openai.FAKE_REASONING_ENABLED', True):
+            with patch('kiro.converters_openai.FAKE_REASONING_MAX_TOKENS', 4000):
                 result = inject_thinking_tags(content)
         
         print("Checking for systematic approach keywords...")
@@ -1585,8 +1585,8 @@ class TestInjectThinkingTags:
         content = "Test"
         
         print("Action: Inject thinking tags...")
-        with patch('kiro.converters.FAKE_REASONING_ENABLED', True):
-            with patch('kiro.converters.FAKE_REASONING_MAX_TOKENS', 4000):
+        with patch('kiro.converters_openai.FAKE_REASONING_ENABLED', True):
+            with patch('kiro.converters_openai.FAKE_REASONING_MAX_TOKENS', 4000):
                 result = inject_thinking_tags(content)
         
         print("Checking for understanding step...")
@@ -1601,8 +1601,8 @@ class TestInjectThinkingTags:
         content = "Test"
         
         print("Action: Inject thinking tags...")
-        with patch('kiro.converters.FAKE_REASONING_ENABLED', True):
-            with patch('kiro.converters.FAKE_REASONING_MAX_TOKENS', 4000):
+        with patch('kiro.converters_openai.FAKE_REASONING_ENABLED', True):
+            with patch('kiro.converters_openai.FAKE_REASONING_MAX_TOKENS', 4000):
                 result = inject_thinking_tags(content)
         
         print("Checking for alternatives consideration...")
@@ -1617,8 +1617,8 @@ class TestInjectThinkingTags:
         content = "Test"
         
         print("Action: Inject thinking tags...")
-        with patch('kiro.converters.FAKE_REASONING_ENABLED', True):
-            with patch('kiro.converters.FAKE_REASONING_MAX_TOKENS', 4000):
+        with patch('kiro.converters_openai.FAKE_REASONING_ENABLED', True):
+            with patch('kiro.converters_openai.FAKE_REASONING_MAX_TOKENS', 4000):
                 result = inject_thinking_tags(content)
         
         print("Checking for edge cases consideration...")
@@ -1633,8 +1633,8 @@ class TestInjectThinkingTags:
         content = "Test"
         
         print("Action: Inject thinking tags...")
-        with patch('kiro.converters.FAKE_REASONING_ENABLED', True):
-            with patch('kiro.converters.FAKE_REASONING_MAX_TOKENS', 4000):
+        with patch('kiro.converters_openai.FAKE_REASONING_ENABLED', True):
+            with patch('kiro.converters_openai.FAKE_REASONING_MAX_TOKENS', 4000):
                 result = inject_thinking_tags(content)
         
         print("Checking for verification step...")
@@ -1649,8 +1649,8 @@ class TestInjectThinkingTags:
         content = "Test"
         
         print("Action: Inject thinking tags...")
-        with patch('kiro.converters.FAKE_REASONING_ENABLED', True):
-            with patch('kiro.converters.FAKE_REASONING_MAX_TOKENS', 4000):
+        with patch('kiro.converters_openai.FAKE_REASONING_ENABLED', True):
+            with patch('kiro.converters_openai.FAKE_REASONING_MAX_TOKENS', 4000):
                 result = inject_thinking_tags(content)
         
         print("Checking for assumptions challenge...")
@@ -1665,8 +1665,8 @@ class TestInjectThinkingTags:
         content = "Test"
         
         print("Action: Inject thinking tags...")
-        with patch('kiro.converters.FAKE_REASONING_ENABLED', True):
-            with patch('kiro.converters.FAKE_REASONING_MAX_TOKENS', 4000):
+        with patch('kiro.converters_openai.FAKE_REASONING_ENABLED', True):
+            with patch('kiro.converters_openai.FAKE_REASONING_MAX_TOKENS', 4000):
                 result = inject_thinking_tags(content)
         
         print("Checking for quality over speed emphasis...")
@@ -1681,8 +1681,8 @@ class TestInjectThinkingTags:
         content = "Test"
         
         print("Action: Inject thinking tags with FAKE_REASONING_MAX_TOKENS=16000...")
-        with patch('kiro.converters.FAKE_REASONING_ENABLED', True):
-            with patch('kiro.converters.FAKE_REASONING_MAX_TOKENS', 16000):
+        with patch('kiro.converters_openai.FAKE_REASONING_ENABLED', True):
+            with patch('kiro.converters_openai.FAKE_REASONING_MAX_TOKENS', 16000):
                 result = inject_thinking_tags(content)
         
         print(f"Result: {result[:300]}...")
@@ -1698,8 +1698,8 @@ class TestInjectThinkingTags:
         content = ""
         
         print("Action: Inject thinking tags...")
-        with patch('kiro.converters.FAKE_REASONING_ENABLED', True):
-            with patch('kiro.converters.FAKE_REASONING_MAX_TOKENS', 4000):
+        with patch('kiro.converters_openai.FAKE_REASONING_ENABLED', True):
+            with patch('kiro.converters_openai.FAKE_REASONING_MAX_TOKENS', 4000):
                 result = inject_thinking_tags(content)
         
         print(f"Result length: {len(result)} chars")
@@ -1716,8 +1716,8 @@ class TestInjectThinkingTags:
         content = "Line 1\nLine 2\nLine 3"
         
         print("Action: Inject thinking tags...")
-        with patch('kiro.converters.FAKE_REASONING_ENABLED', True):
-            with patch('kiro.converters.FAKE_REASONING_MAX_TOKENS', 4000):
+        with patch('kiro.converters_openai.FAKE_REASONING_ENABLED', True):
+            with patch('kiro.converters_openai.FAKE_REASONING_MAX_TOKENS', 4000):
                 result = inject_thinking_tags(content)
         
         print("Checking that multiline content is preserved...")
@@ -1732,8 +1732,8 @@ class TestInjectThinkingTags:
         content = "Check this <code>example</code> and {json: 'value'}"
         
         print("Action: Inject thinking tags...")
-        with patch('kiro.converters.FAKE_REASONING_ENABLED', True):
-            with patch('kiro.converters.FAKE_REASONING_MAX_TOKENS', 4000):
+        with patch('kiro.converters_openai.FAKE_REASONING_ENABLED', True):
+            with patch('kiro.converters_openai.FAKE_REASONING_MAX_TOKENS', 4000):
                 result = inject_thinking_tags(content)
         
         print("Checking that special characters are preserved...")
@@ -1749,8 +1749,8 @@ class TestInjectThinkingTags:
         content = "USER_CONTENT_HERE"
         
         print("Action: Inject thinking tags...")
-        with patch('kiro.converters.FAKE_REASONING_ENABLED', True):
-            with patch('kiro.converters.FAKE_REASONING_MAX_TOKENS', 4000):
+        with patch('kiro.converters_openai.FAKE_REASONING_ENABLED', True):
+            with patch('kiro.converters_openai.FAKE_REASONING_MAX_TOKENS', 4000):
                 result = inject_thinking_tags(content)
         
         print("Checking tag order...")
@@ -1982,7 +1982,7 @@ class TestBuildKiroPayload:
         )
 
         print("Action: Building payload (with fake reasoning disabled)...")
-        with patch('kiro.converters.FAKE_REASONING_ENABLED', False):
+        with patch('kiro.converters_openai.FAKE_REASONING_ENABLED', False):
             result = build_kiro_payload(request, "conv-123", "")
 
         print(f"Result: {result}")
@@ -2032,7 +2032,7 @@ class TestBuildKiroPayload:
         )
         
         print("Action: Building payload...")
-        with patch('kiro.converters.TOOL_DESCRIPTION_MAX_LENGTH', 10000):
+        with patch('kiro.converters_openai.TOOL_DESCRIPTION_MAX_LENGTH', 10000):
             result = build_kiro_payload(request, "conv-123", "")
         
         print(f"Checking that system prompt contains tool documentation...")
@@ -2074,8 +2074,8 @@ class TestBuildKiroPayload:
         )
         
         print("Action: Building payload with FAKE_REASONING_ENABLED=True...")
-        with patch('kiro.converters.FAKE_REASONING_ENABLED', True):
-            with patch('kiro.converters.FAKE_REASONING_MAX_TOKENS', 4000):
+        with patch('kiro.converters_openai.FAKE_REASONING_ENABLED', True):
+            with patch('kiro.converters_openai.FAKE_REASONING_MAX_TOKENS', 4000):
                 result = build_kiro_payload(request, "conv-123", "")
         
         current_msg = result["conversationState"]["currentMessage"]["userInputMessage"]
@@ -2101,8 +2101,8 @@ class TestBuildKiroPayload:
         )
         
         print("Action: Building payload with FAKE_REASONING_ENABLED=True...")
-        with patch('kiro.converters.FAKE_REASONING_ENABLED', True):
-            with patch('kiro.converters.FAKE_REASONING_MAX_TOKENS', 4000):
+        with patch('kiro.converters_openai.FAKE_REASONING_ENABLED', True):
+            with patch('kiro.converters_openai.FAKE_REASONING_MAX_TOKENS', 4000):
                 result = build_kiro_payload(request, "conv-123", "")
         
         current_msg = result["conversationState"]["currentMessage"]["userInputMessage"]

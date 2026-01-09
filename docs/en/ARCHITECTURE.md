@@ -167,7 +167,7 @@ Centralized storage of all settings:
 - `get_kiro_q_host(region)` — Q API host
 - `get_internal_model_id(external_model)` — model name conversion
 
-### 3.3. Pydantic Models (`kiro/models.py`)
+### 3.3. Pydantic Models (`kiro/models_openai.py`)
 
 #### Models for `/v1/models`
 
@@ -260,7 +260,7 @@ token = await auth_manager.get_access_token()
 | `generate_conversation_id()` | UUID for conversation |
 | `generate_tool_call_id()` | ID in format `call_{uuid_hex[:8]}` |
 
-### 3.6. Conversion Layer (`kiro/converters.py`)
+### 3.6. Conversion Layer (`kiro/converters_openai.py`)
 
 #### Message Conversion
 
@@ -340,7 +340,7 @@ Advanced AWS SSE format parser with support for:
 | `parse_bracket_tool_calls(response_text)` | Parse `[Called func with args: {...}]` |
 | `deduplicate_tool_calls(tool_calls)` | Remove duplicate tool calls |
 
-### 3.8. Streaming (`kiro/streaming.py`)
+### 3.8. Streaming (`kiro/streaming_openai.py`)
 
 #### stream_kiro_to_openai
 
@@ -378,7 +378,7 @@ Automatic error handling with exponential backoff:
 
 Supports async context manager (`async with`).
 
-### 3.10. Routes (`kiro/routes.py`)
+### 3.10. Routes (`kiro/routes_openai.py`)
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|

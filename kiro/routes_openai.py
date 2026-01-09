@@ -40,15 +40,15 @@ from kiro.config import (
     AVAILABLE_MODELS,
     APP_VERSION,
 )
-from kiro.models import (
+from kiro.models_openai import (
     OpenAIModel,
     ModelList,
     ChatCompletionRequest,
 )
 from kiro.auth import KiroAuthManager, AuthType
 from kiro.cache import ModelInfoCache
-from kiro.converters import build_kiro_payload
-from kiro.streaming import stream_kiro_to_openai, collect_stream_response, stream_with_first_token_retry
+from kiro.converters_openai import build_kiro_payload
+from kiro.streaming_openai import stream_kiro_to_openai, collect_stream_response, stream_with_first_token_retry
 from kiro.http_client import KiroHttpClient
 from kiro.utils import get_kiro_headers, generate_conversation_id
 

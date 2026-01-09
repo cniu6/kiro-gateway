@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 """
-Unit-тесты для API endpoints (routes.py).
+Unit-тесты для API endpoints (routes_openai.py).
 Проверяет работу эндпоинтов /, /health, /v1/models, /v1/chat/completions.
 """
 
@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from kiro.routes import verify_api_key, router
+from kiro.routes_openai import verify_api_key, router
 from kiro.config import PROXY_API_KEY, APP_VERSION, AVAILABLE_MODELS
 
 

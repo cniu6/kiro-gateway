@@ -47,7 +47,7 @@ __author__ = "Jwadow"
 from kiro.auth import KiroAuthManager
 from kiro.cache import ModelInfoCache
 from kiro.http_client import KiroHttpClient
-from kiro.routes import router
+from kiro.routes_openai import router
 
 # Configuration
 from kiro.config import (
@@ -59,7 +59,7 @@ from kiro.config import (
 )
 
 # Models
-from kiro.models import (
+from kiro.models_openai import (
     ChatCompletionRequest,
     ChatMessage,
     OpenAIModel,
@@ -67,7 +67,7 @@ from kiro.models import (
 )
 
 # Converters
-from kiro.converters import (
+from kiro.converters_openai import (
     build_kiro_payload,
     extract_text_content,
     merge_adjacent_messages,
@@ -80,7 +80,7 @@ from kiro.parsers import (
 )
 
 # Streaming
-from kiro.streaming import (
+from kiro.streaming_openai import (
     stream_kiro_to_openai,
     collect_stream_response,
 )

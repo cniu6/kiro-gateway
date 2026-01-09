@@ -167,7 +167,7 @@ kiro-gateway/
 - `get_kiro_q_host(region)` — хост Q API
 - `get_internal_model_id(external_model)` — конвертация имени модели
 
-### 3.3. Pydantic Модели (`kiro/models.py`)
+### 3.3. Pydantic Модели (`kiro/models_openai.py`)
 
 #### Модели для `/v1/models`
 
@@ -260,7 +260,7 @@ token = await auth_manager.get_access_token()
 | `generate_conversation_id()` | UUID для разговора |
 | `generate_tool_call_id()` | ID в формате `call_{uuid_hex[:8]}` |
 
-### 3.6. Слой Конвертации (`kiro/converters.py`)
+### 3.6. Слой Конвертации (`kiro/converters_openai.py`)
 
 #### Конвертация сообщений
 
@@ -340,7 +340,7 @@ OpenAI messages преобразуются в Kiro conversationState:
 | `parse_bracket_tool_calls(response_text)` | Парсинг `[Called func with args: {...}]` |
 | `deduplicate_tool_calls(tool_calls)` | Удаление дубликатов tool calls |
 
-### 3.8. Streaming (`kiro/streaming.py`)
+### 3.8. Streaming (`kiro/streaming_openai.py`)
 
 #### stream_kiro_to_openai
 
@@ -378,7 +378,7 @@ OpenAI messages преобразуются в Kiro conversationState:
 
 Поддерживает async context manager (`async with`).
 
-### 3.10. Роуты (`kiro/routes.py`)
+### 3.10. Роуты (`kiro/routes_openai.py`)
 
 | Endpoint | Метод | Описание |
 |----------|-------|----------|
